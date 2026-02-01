@@ -32,6 +32,7 @@ impl PageSection {
 unsafe impl<T: ObjectSubclass + BoxImpl> IsSubclassable<T> for PageSection {}
 
 mod imp {
+    use crate::app::styles::classes;
     use glib::Properties;
     use gtk::{
         Label,
@@ -95,7 +96,7 @@ mod imp {
                     #[local_ref]
                     append = content_box {
                         set_orientation: gtk::Orientation::Vertical,
-                        add_css_class: if cfg!(feature = "adw") { css::CARD } else { "page-section-content" },
+                        add_css_class: if cfg!(feature = "adw") { css::CARD } else { classes::page_section_content },
                         #[watch]
                         add_css_class: if cfg!(feature = "adw") { "" } else { css::FRAME },
 

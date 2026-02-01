@@ -1,3 +1,4 @@
+use crate::app::styles::classes;
 use gtk::glib::{self, Object, subclass::types::IsSubclassable};
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
@@ -71,7 +72,7 @@ impl<T: IsA<InfoRow>> InfoRowExt for T {
             if let Some(parent) = widget.parent()
                 && let Ok(child) = parent.downcast::<gtk::FlowBoxChild>()
             {
-                child.add_css_class("clickable-info-row");
+                child.add_css_class(classes::clickable_info_row);
             }
         });
     }

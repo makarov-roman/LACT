@@ -1704,6 +1704,7 @@ dependencies = [
  "indexmap",
  "lact-client",
  "lact-daemon",
+ "lact-gui-build",
  "lact-schema",
  "libadwaita",
  "plotters",
@@ -1719,6 +1720,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "lact-gui-build"
+version = "0.1.0"
 
 [[package]]
 name = "lact-schema"
