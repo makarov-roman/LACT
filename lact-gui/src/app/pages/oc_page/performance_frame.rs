@@ -16,6 +16,8 @@ use heuristics_list::PowerProfileHeuristicsList;
 use i18n_embed_fl::fl;
 use relm4::{Component, ComponentController, ComponentParts, ComponentSender, RelmWidgetExt};
 
+use std::sync::Arc;
+
 const PERFORMANCE_LEVELS: [PerformanceLevel; 4] = [
     PerformanceLevel::Auto,
     PerformanceLevel::High,
@@ -25,7 +27,8 @@ const PERFORMANCE_LEVELS: [PerformanceLevel; 4] = [
 
 pub struct PerformanceFrame {
     performance_level: Option<PerformanceLevel>,
-    power_profile_modes_table: Option<PowerProfileModesTable>,
+    power_profile_modes_table: Option<Arc<PowerProfileModesTable>>,
+    power_profile_active_mode: Option<u16>,
     power_profile_modes: gtk::StringList,
     heuristics_components: Vec<relm4::Controller<PowerProfileHeuristicsList>>,
 }
@@ -33,7 +36,7 @@ pub struct PerformanceFrame {
 #[derive(Debug)]
 pub enum PerformanceFrameMsg {
     PerformanceLevel(Option<PerformanceLevel>),
-    PowerProfileModes(Option<PowerProfileModesTable>),
+    PowerProfileModes(Option<Arc<PowerProfileModesTable>>),
     PowerProfileSelected(u16),
 }
 
@@ -112,7 +115,10 @@ impl relm4::Component for PerformanceFrame {
                 gtk::MenuButton {
                     set_always_show_arrow: false,
                     #[watch]
-                    set_label: model.power_profile_modes_table.as_ref().and_then(|table| table.modes.get(&table.active)).map(|profile| profile.name.as_str()).unwrap_or_default(),
+                    set_label: {
+                        let active_mode = model.power_profile_active_mode.unwrap_or_default();
+                        model.power_profile_modes_table.as_ref().and_then(|table| table.modes.get(&active_mode)).map(|profile| profile.name.as_str()).unwrap_or_default()
+                    },
 
                     #[wrap(Some)]
                     set_popover =  &gtk::Popover {
@@ -138,9 +144,9 @@ impl relm4::Component for PerformanceFrame {
                                         }
                                 } @ power_profile_selected_handler,
 
-                                #[watch]
+                                 #[watch]
                                 #[block_signal(power_profile_selected_handler)]
-                                select_row: model.power_profile_modes_table.as_ref().and_then(|table| modes_listbox.row_at_index(table.active.into())).as_ref(),
+                                select_row: model.power_profile_active_mode.and_then(|idx| modes_listbox.row_at_index(idx.into())).as_ref(),
                             },
 
                             #[name = "heuristics_notebook"]
@@ -169,6 +175,7 @@ impl relm4::Component for PerformanceFrame {
         let model = Self {
             performance_level: None,
             power_profile_modes_table: None,
+            power_profile_active_mode: None,
             power_profile_modes: gtk::StringList::new(&[]),
             heuristics_components: vec![],
         };
@@ -198,16 +205,19 @@ impl relm4::Component for PerformanceFrame {
                     for mode in table.modes.values() {
                         self.power_profile_modes.append(&mode.name);
                     }
+                    self.power_profile_active_mode = Some(table.active);
+                } else {
+                    self.power_profile_active_mode = None;
                 }
 
                 self.power_profile_modes_table = table;
                 self.update_heuristic_components(widgets);
             }
             PerformanceFrameMsg::PowerProfileSelected(idx) => {
-                if let Some(table) = &mut self.power_profile_modes_table
-                    && table.active != idx
+                if let Some(active_mode) = self.power_profile_active_mode
+                    && active_mode != idx
                 {
-                    table.active = idx;
+                    self.power_profile_active_mode = Some(idx);
                     APP_BROKER.send(AppMsg::SettingsChanged);
                     self.update_heuristic_components(widgets);
                 }
@@ -215,7 +225,8 @@ impl relm4::Component for PerformanceFrame {
         }
 
         if let Some(table) = &self.power_profile_modes_table
-            && let Some(active) = table.modes.get(&table.active)
+            && let Some(active_mode) = self.power_profile_active_mode
+            && let Some(active) = table.modes.get(&active_mode)
         {
             for heuristics_component in &self.heuristics_components {
                 heuristics_component
@@ -238,7 +249,8 @@ impl PerformanceFrame {
         }
 
         if let Some(table) = &self.power_profile_modes_table
-            && let Some(active_profile) = table.modes.get(&table.active)
+            && let Some(active_mode) = self.power_profile_active_mode
+            && let Some(active_profile) = table.modes.get(&active_mode)
         {
             for component in &active_profile.components {
                 let title = component.clock_type.as_deref().unwrap_or("All");
@@ -263,9 +275,7 @@ impl PerformanceFrame {
 
     pub fn power_profile_mode(&self) -> Option<u16> {
         if self.performance_level == Some(PerformanceLevel::Manual) {
-            self.power_profile_modes_table
-                .as_ref()
-                .map(|table| table.active)
+            self.power_profile_active_mode
         } else {
             None
         }
@@ -273,7 +283,8 @@ impl PerformanceFrame {
 
     pub fn power_profile_mode_custom_heuristics(&self) -> Vec<Vec<Option<i32>>> {
         if let Some(table) = &self.power_profile_modes_table
-            && let Some(mode) = table.modes.get(&table.active)
+            && let Some(active_mode) = self.power_profile_active_mode
+            && let Some(mode) = table.modes.get(&active_mode)
             && mode.is_custom()
         {
             return self

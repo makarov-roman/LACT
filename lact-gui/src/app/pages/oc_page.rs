@@ -45,7 +45,7 @@ pub enum OcPageMsg {
         initial: bool,
     },
     ClocksTable(Option<ClocksTable>),
-    ProfileModesTable(Option<PowerProfileModesTable>),
+    ProfileModesTable(Option<Arc<PowerProfileModesTable>>),
     PowerStates {
         pstates: PowerStates,
         configured: bool,
@@ -178,8 +178,7 @@ impl relm4::Component for OcPage {
                 self.clocks_frame.emit(ClocksFrameMsg::Clocks(table));
             }
             OcPageMsg::ProfileModesTable(modes_table) => {
-                self.performance_frame
-                    .emit(PerformanceFrameMsg::PowerProfileModes(modes_table));
+                self.performance_frame.emit(PerformanceFrameMsg::PowerProfileModes(modes_table));
             }
             OcPageMsg::PowerStates {
                 pstates,

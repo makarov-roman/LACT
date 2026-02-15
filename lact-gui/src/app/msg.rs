@@ -1,9 +1,13 @@
 use super::{
+    app_content::InitialGpuData,
     confirmation_dialog::ConfirmationOptions,
-    header::profile_rule_window::{ProfileRuleWindowMsg, profile_row::ProfileRuleRowMsg},
+    header::profile_rule_window::{profile_row::ProfileRuleRowMsg, ProfileRuleWindowMsg},
 };
 use lact_client::ConnectionStatusMsg;
-use lact_schema::{DeviceStats, ProfileRule, config::ProfileHooks, request::ProfileBase};
+use lact_schema::{
+    config::ProfileHooks, request::ProfileBase, DeviceListEntry, DeviceStats, ProfileRule,
+    SystemInfo,
+};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -49,6 +53,13 @@ pub enum AppMsg {
     ConnectionStatus(ConnectionStatusMsg),
     AskConfirmation(ConfirmationOptions, Box<AppMsg>),
     Crash(String),
+    DataLoaded {
+        system_info: SystemInfo,
+        devices: Vec<DeviceListEntry>,
+        initial_gpu: Option<(String, InitialGpuData)>,
+        profiles: Arc<lact_schema::ProfilesInfo>,
+    },
+    LoadingStatus(String),
 }
 
 impl AppMsg {

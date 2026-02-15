@@ -688,7 +688,7 @@ pub struct FanOptions<'a> {
     pub change_threshold: Option<u64>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ProfilesInfo {
     pub profiles: IndexMap<String, Option<ProfileRule>>,
     #[serde(default)]
