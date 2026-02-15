@@ -1,18 +1,18 @@
 use crate::{CONFIG, I18N, app::{overdrive_dialog::{OverdriveDialog, OverdriveDialogMsg}, process_monitor::{ProcessMonitorWindow, ProcessMonitorWindowMsg}}};
 use anyhow::Context;
-use gtk::{glib::{clone}, prelude::{Cast, DialogExtManual, FileChooserExt, FileExt, GtkWindowExt, OrientableExt, WidgetExt}, FileChooserAction, FileChooserDialog, ResponseType};
+use gtk::{glib::clone, prelude::{Cast, DialogExtManual, FileChooserExt, FileExt, GtkWindowExt, OrientableExt, WidgetExt}, FileChooserAction, FileChooserDialog, ResponseType};
 use i18n_embed_fl::fl;
 use lact_schema::{DeviceStats, config::GpuConfig, DeviceListEntry, ClocksTable, PowerStates, ProfilesInfo, DeviceInfo, SystemInfo};
 use amdgpu_sysfs::gpu_handle::power_profile_mode::PowerProfileModesTable;
 use relm4::{AsyncComponentSender, Component, ComponentController, RelmObjectExt, binding::BoolBinding, prelude::{AsyncComponent, AsyncComponentParts}, tokio::time::sleep};
 use relm4_components::open_dialog::{OpenDialog, OpenDialogMsg, OpenDialogResponse, OpenDialogSettings};
+use relm4_components::save_dialog::{SaveDialog, SaveDialogMsg, SaveDialogResponse, SaveDialogSettings};
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use tracing::trace;
+use tracing::{trace, error};
 
-use super::{apply_revealer::{ApplyRevealer, ApplyRevealerMsg}, confirmation_dialog::ConfirmationDialog, ext::RelmDefaultLauchable, graphs_window::{GraphsWindow, GraphsWindowMsg}, header::{Header, HeaderMsg}, pages::{PageUpdate, crash_page::CrashPage, info_page::InformationPage, oc_page::{OcPage, OcPageMsg}, software_page::{SoftwarePage, SoftwarePageMsg}, thermals_page::{ThermalsPage, ThermalsPageMsg}}, msg::AppMsg, show_error, show_embedded_info};
+use super::{apply_revealer::{ApplyRevealer, ApplyRevealerMsg}, confirmation_dialog::ConfirmationDialog, ext::RelmDefaultLauchable, graphs_window::{GraphsWindow, GraphsWindowMsg}, header::{Header, HeaderMsg}, pages::{PageUpdate, crash_page::CrashPage, info_page::InformationPage, oc_page::{OcPage, OcPageMsg}, software_page::{SoftwarePage, SoftwarePageMsg}, thermals_page::{ThermalsPage, ThermalsPageMsg}}, msg::{AppMsg, AppContentMsg, UiCommand}, show_error, show_embedded_info};
 
 const PROCESS_POLL_INTERVAL_MS: u64 = 1500;
-const NVIDIA_RECOMMENDED_MIN_VERSION: u32 = 560;
 
 #[derive(Debug, Clone)]
 pub struct InitialGpuData {
@@ -57,7 +57,7 @@ pub enum CommandOutput {
 #[relm4::component(pub, async)]
 impl AsyncComponent for AppContent {
     type Init = AppContentInit;
-    type Input = AppMsg;
+    type Input = AppContentMsg;
     type Output = AppMsg;
     type CommandOutput = Option<CommandOutput>;
 
@@ -120,7 +120,7 @@ impl AsyncComponent for AppContent {
 
         let oc_page = OcPage::builder()
             .launch(system_info.clone())
-            .forward(sender.input_sender(), |msg| msg);
+            .forward(sender.input_sender(), AppContentMsg::Action);
         let thermals_page = ThermalsPage::builder().launch(system_info.clone()).detach();
 
         let software_page = SoftwarePage::builder()
@@ -129,7 +129,7 @@ impl AsyncComponent for AppContent {
 
         let crash_page = CrashPage::builder()
             .launch(String::new())
-            .forward(sender.input_sender(), |msg| msg);
+            .forward(sender.input_sender(), AppContentMsg::Action);
 
         let overdrive_dialog = OverdriveDialog::builder()
             .transient_for(&window)
@@ -147,11 +147,11 @@ impl AsyncComponent for AppContent {
                     .unwrap();
             })
             .launch((devices, system_info))
-            .forward(sender.input_sender(), |msg| msg);
+            .forward(sender.input_sender(), AppContentMsg::Action);
 
         let apply_revealer = ApplyRevealer::builder()
             .launch(())
-            .forward(sender.input_sender(), |msg| msg);
+            .forward(sender.input_sender(), AppContentMsg::Action);
 
         let graphs_window = GraphsWindow::detach_default();
         let process_monitor_window = ProcessMonitorWindow::detach_default();
@@ -187,76 +187,17 @@ impl AsyncComponent for AppContent {
 
         model.header.emit(HeaderMsg::Profiles(Box::new((*profiles).clone())));
 
-        if let Some((gpu_id, gpu_data)) = initial_gpu {
-            let info = Arc::new(gpu_data.info);
-            let stats = Arc::new(gpu_data.stats);
-
-            if info.driver == "nvidia" {
-                sender.input(AppMsg::Error(Arc::new(anyhow::anyhow!("Nvidia driver detected, but the management library could not be loaded. Check lact service status for more information."))));
-            } else if let Some(nvidia_version) = info.driver.strip_prefix("nvidia ")
-                && let Some(major_version) = nvidia_version
-                    .split('.')
-                    .next()
-                    .and_then(|version| version.parse::<u32>().ok())
-                && major_version < NVIDIA_RECOMMENDED_MIN_VERSION
-            {
-                sender.input(AppMsg::Error(Arc::new(anyhow::anyhow!("Old Nvidia driver version detected ({major_version}), some features might be missing. Driver version {NVIDIA_RECOMMENDED_MIN_VERSION} or newer is recommended."))));
-            }
-
-            let update = PageUpdate::Info(info.clone());
-            model.info_page.emit(update.clone());
-            model.oc_page.emit(OcPageMsg::Update {
-                update: update.clone(),
-                initial: true,
-            });
-            model.software_page
-                .emit(SoftwarePageMsg::DeviceInfo(info.clone()));
-            model.header.emit(HeaderMsg::DeviceInfo(info.clone()));
-            model.thermals_page.emit(ThermalsPageMsg::Update {
-                update: update.clone(),
-                initial: true,
-            });
-
-            let vram_clock_ratio = info
-                .drm_info
-                .as_ref()
-                .map(|info| info.vram_clock_ratio)
-                .unwrap_or(1.0);
-            model.graphs_window
-                .emit(GraphsWindowMsg::VramClockRatio(vram_clock_ratio));
-
-            let stats_update = PageUpdate::Stats(stats.clone());
-            model.info_page.emit(stats_update.clone());
-            model.thermals_page.emit(ThermalsPageMsg::Update {
-                update: stats_update.clone(),
-                initial: true,
-            });
-            model.oc_page.emit(OcPageMsg::Update {
-                update: stats_update,
-                initial: true,
-            });
-
-            if let Some(clocks_table) = gpu_data.clocks_table {
-                model.oc_page.emit(OcPageMsg::ClocksTable(Some(clocks_table)));
-            }
-
-            if let Some(profile_modes) = gpu_data.profile_modes {
-                model.oc_page.emit(OcPageMsg::ProfileModesTable(Some(profile_modes)));
-            }
-
-            if let Some(power_states) = gpu_data.power_states {
-                model.oc_page.emit(OcPageMsg::PowerStates {
-                    pstates: power_states,
-                    configured: gpu_data.config.as_ref().is_some_and(|config| !config.power_states.is_empty()),
-                });
-            }
-
-            model.graphs_window.emit(GraphsWindowMsg::Stats {
-                stats,
-                selected_gpu_id: Some(gpu_id.clone()),
+        if let Some((_gpu_id, gpu_data)) = initial_gpu {
+            sender.input(AppContentMsg::GpuDataUpdate {
+                info: Some(Arc::new(gpu_data.info)),
+                stats: Some(Arc::new(gpu_data.stats)),
+                clocks_table: gpu_data.clocks_table,
+                profile_modes: gpu_data.profile_modes,
+                power_states: gpu_data.power_states,
+                config: gpu_data.config,
             });
         } else {
-            sender.input(AppMsg::ReloadData { full: true });
+            sender.output(AppMsg::ReloadData { full: true }).unwrap();
         }
 
         let task_sender = sender.clone();
@@ -265,7 +206,7 @@ impl AsyncComponent for AppContent {
                 .register(async move {
                     loop {
                         sleep(Duration::from_millis(PROCESS_POLL_INTERVAL_MS)).await;
-                        task_sender.input(AppMsg::FetchProcessList);
+                        task_sender.input(AppContentMsg::Action(AppMsg::FetchProcessList));
                     }
                 })
                 .drop_on_shutdown()
@@ -297,7 +238,7 @@ impl AsyncComponent for AppContent {
         if let Some(msg) = msg
             && let Err(err) = self.handle_cmd_output(msg, &sender).await
         {
-            sender.input(AppMsg::Error(Arc::new(err.into())));
+            sender.input(AppContentMsg::Error(Arc::new(err.into())));
         }
     }
 }
@@ -305,46 +246,16 @@ impl AsyncComponent for AppContent {
 impl AppContent {
     async fn handle_msg(
         &mut self,
-        msg: AppMsg,
+        msg: AppContentMsg,
         sender: AsyncComponentSender<Self>,
         widgets: &<Self as AsyncComponent>::Widgets,
     ) -> Result<(), Arc<anyhow::Error>> {
         match msg {
-            AppMsg::Error(err) => return Err(err),
-            AppMsg::SettingsChanged => {
-                self.apply_revealer.emit(ApplyRevealerMsg::Show);
+            AppContentMsg::Error(err) => return Err(err),
+            AppContentMsg::LoadingStatus(status) => {
+                trace!("loading status: {status}");
             }
-            AppMsg::ShowGraphsWindow => {
-                self.graphs_window.emit(GraphsWindowMsg::Show);
-            }
-            AppMsg::ShowProcessMonitor => {
-                self.process_monitor_window
-                    .emit(ProcessMonitorWindowMsg::Show);
-            }
-            AppMsg::ShowOverdriveDialog => {
-                self.overdrive_dialog.emit(OverdriveDialogMsg::Show);
-            }
-            AppMsg::AskConfirmation(options, confirmed_msg) => {
-                let sender = sender.clone();
-
-                let mut controller = ConfirmationDialog::builder()
-                    .launch((options, self.root.clone()))
-                    .connect_receiver(move |_, response| {
-                        if let gtk::ResponseType::Ok | gtk::ResponseType::Yes = response {
-                            sender.input(*confirmed_msg.clone());
-                        }
-                    });
-                controller.detach_runtime();
-            }
-            AppMsg::Crash(message) => {
-                self.header.widget().set_sensitive(false);
-                self.apply_revealer.widget().set_sensitive(false);
-
-                self.ui_sensitive.set_value(true);
-                widgets.root_stack.set_visible_child_name("crash_page");
-                self.crash_page.emit(message);
-            }
-            AppMsg::Stats(stats) => {
+            AppContentMsg::Stats(stats) => {
                 let update = PageUpdate::Stats(stats.clone());
                 self.oc_page.emit(OcPageMsg::Update {
                     update: update.clone(),
@@ -359,72 +270,14 @@ impl AppContent {
                     selected_gpu_id: None,
                 });
             }
-            AppMsg::Profiles(profiles) => {
+            AppContentMsg::Profiles(profiles) => {
                 self.header.emit(HeaderMsg::Profiles(Box::new((*profiles).clone())));
             }
-            AppMsg::ReloadData { .. } => {
-                self.apply_revealer
-                    .sender()
-                    .send(ApplyRevealerMsg::Hide)
-                    .unwrap();
-                sender.output(msg).unwrap();
-            }
-            AppMsg::ApplyChanges => {
-                let gpu_id = self.current_gpu_id()?;
-                let config = self.collect_config();
-                sender.output(AppMsg::ApplyConfig(gpu_id, Box::new(config))).unwrap();
-            }
-            AppMsg::DumpVBios => {
-                self.dump_vbios(sender).await;
-            }
-            AppMsg::DebugSnapshot => {
-                sender.output(msg).unwrap();
-            }
-            AppMsg::ImportProfile => {
-                let json_filter = gtk::FileFilter::new();
-                json_filter.add_mime_type("application/json");
-
-                let settings = OpenDialogSettings {
-                    filters: vec![json_filter],
-                    ..Default::default()
-                };
-                let file_picker = OpenDialog::builder().launch(settings);
-                file_picker.emit(OpenDialogMsg::Open);
-                let stream = file_picker.into_stream();
-
-                sender.oneshot_command(async move {
-                    if let Some(OpenDialogResponse::Accept(path)) = stream.recv_one().await {
-                        Some(CommandOutput::ProfileImport(path))
-                    } else {
-                        None
-                    }
-                });
-            }
-            AppMsg::ExportProfile(name) => {
-                sender.output(AppMsg::ExportProfile(name)).unwrap();
-            }
-            AppMsg::ReloadProfiles { .. }
-            | AppMsg::SelectProfile { .. }
-            | AppMsg::CreateProfile { .. }
-            | AppMsg::RenameProfile { .. }
-            | AppMsg::DeleteProfile { .. }
-            | AppMsg::MoveProfile { .. }
-            | AppMsg::RevertChanges
-            | AppMsg::ResetClocks
-            | AppMsg::ResetPmfw
-            | AppMsg::EnableOverdrive
-            | AppMsg::DisableOverdrive
-            | AppMsg::ResetConfig
-            | AppMsg::FetchProcessList
-            | AppMsg::EvaluateProfile { .. }
-            | AppMsg::SetProfileRule { .. } => {
-                sender.output(msg).unwrap();
-            }
-            AppMsg::ProcessList(process_list) => {
+            AppContentMsg::ProcessList(process_list) => {
                 self.process_monitor_window
                     .emit(ProcessMonitorWindowMsg::Data(process_list));
             }
-            AppMsg::GpuDataUpdate {
+            AppContentMsg::GpuDataUpdate {
                 info,
                 stats,
                 clocks_table,
@@ -492,10 +345,132 @@ impl AppContent {
 
                 self.ui_sensitive.set_value(true);
             }
-            AppMsg::DataLoaded { .. } | AppMsg::LoadingStatus(_) | AppMsg::ConnectionStatus(_) => {
+            AppContentMsg::UiCommand(cmd) => match cmd {
+                UiCommand::ShowGraphs => self.graphs_window.emit(GraphsWindowMsg::Show),
+                UiCommand::ShowProcessMonitor => self.process_monitor_window.emit(ProcessMonitorWindowMsg::Show),
+                UiCommand::ShowOverdriveDialog => self.overdrive_dialog.emit(OverdriveDialogMsg::Show),
+                UiCommand::AskConfirmation(options, confirmed_msg) => {
+                    let sender = sender.clone();
+                    let mut controller = ConfirmationDialog::builder()
+                        .launch((options, self.root.clone()))
+                        .connect_receiver(move |_, response| {
+                            if let gtk::ResponseType::Ok | gtk::ResponseType::Yes = response {
+                                sender.input(AppContentMsg::Action(confirmed_msg.clone()));
+                            }
+                        });
+                    controller.detach_runtime();
+                }
+            },
+            AppContentMsg::Action(action) => match action {
+                AppMsg::ApplyChanges => {
+                    let gpu_id = self.current_gpu_id()?;
+                    let config = self.collect_config();
+                    sender.output(AppMsg::ApplyConfig(gpu_id, Box::new(config))).unwrap();
+                }
+                AppMsg::SettingsChanged => {
+                    self.apply_revealer.emit(ApplyRevealerMsg::Show);
+                }
+                AppMsg::ShowGraphsWindow => sender.input(AppContentMsg::UiCommand(UiCommand::ShowGraphs)),
+                AppMsg::ShowProcessMonitor => sender.input(AppContentMsg::UiCommand(UiCommand::ShowProcessMonitor)),
+                AppMsg::ShowOverdriveDialog => sender.input(AppContentMsg::UiCommand(UiCommand::ShowOverdriveDialog)),
+                AppMsg::ReloadData { .. } => {
+                    self.apply_revealer.emit(ApplyRevealerMsg::Hide);
+                    sender.output(action).unwrap();
+                }
+                AppMsg::ImportProfile => {
+                    let json_filter = gtk::FileFilter::new();
+                    json_filter.add_mime_type("application/json");
+
+                    let settings = OpenDialogSettings {
+                        filters: vec![json_filter],
+                        ..Default::default()
+                    };
+                    let file_picker = OpenDialog::builder().launch(settings);
+                    file_picker.emit(OpenDialogMsg::Open);
+                    let stream = file_picker.into_stream();
+
+                    sender.oneshot_command(async move {
+                        if let Some(OpenDialogResponse::Accept(path)) = stream.recv_one().await {
+                            Some(CommandOutput::ProfileImport(path))
+                        } else {
+                            None
+                        }
+                    });
+                }
+                AppMsg::AskConfirmation(options, confirmed_msg) => {
+                    sender.input(AppContentMsg::UiCommand(UiCommand::AskConfirmation(options, *confirmed_msg)))
+                }
+                AppMsg::Crash(message) => {
+                    sender.input(AppContentMsg::Crash(message));
+                }
+                AppMsg::DumpVBios => {
+                    let file_chooser = FileChooserDialog::new(
+                        Some("Save VBIOS file"),
+                        Some(&self.root),
+                        FileChooserAction::Save,
+                        &[
+                            ("Save", ResponseType::Accept),
+                            ("Cancel", ResponseType::Cancel),
+                        ],
+                    );
+
+                    let gpu_id = self.current_gpu_id().unwrap_or_default();
+                    let file_name_suffix = gpu_id
+                        .split_once('-')
+                        .map(|(id, _)| id.replace(':', "_"))
+                        .unwrap_or_default();
+                    file_chooser.set_current_name(&format!("{file_name_suffix}_vbios_dump.rom"));
+                    file_chooser.run_async(clone!(
+                        #[strong]
+                        sender,
+                        move |diag, response| {
+                            diag.close();
+
+                            if response == gtk::ResponseType::Accept
+                                && let Some(file) = diag.file()
+                            {
+                                if let Some(path) = file.path() {
+                                    sender.output(AppMsg::DumpVBiosPath(path)).unwrap();
+                                }
+                            }
+                        }
+                    ));
+                }
+                other => sender.output(other).unwrap(),
+            },
+            AppContentMsg::Crash(message) => {
+                self.header.widget().set_sensitive(false);
+                self.apply_revealer.widget().set_sensitive(false);
+
+                self.ui_sensitive.set_value(true);
+                widgets.root_stack.set_visible_child_name("crash_page");
+                self.crash_page.emit(message);
             }
-            AppMsg::ImportProfilePath(_) | AppMsg::DumpVBiosPath(_) | AppMsg::ApplyConfig(_, _) => {
-                unreachable!("Message should be handled in AppModel");
+            AppContentMsg::ExportProfileData(name, profile) => {
+                let settings = SaveDialogSettings {
+                    create_folders: true,
+                    is_modal: true,
+                    ..Default::default()
+                };
+                let diag = SaveDialog::builder().launch(settings);
+                diag.emit(SaveDialogMsg::SaveAs(format!(
+                    "LACT-profile-{}.json",
+                    name.as_deref().unwrap_or("default")
+                )));
+
+                let stream = diag.into_stream();
+
+                sender.oneshot_command(async move {
+                    if let Some(SaveDialogResponse::Accept(path)) = stream.recv_one().await {
+                        let contents = serde_json::to_string(&profile)
+                            .expect("Could not serialize profile");
+
+                        if let Err(err) = std::fs::write(path, contents) {
+                            error!("Could not export profile: {err:#}");
+                        }
+                    }
+                    None
+                });
             }
         }
         Ok(())
@@ -547,39 +522,5 @@ impl AppContent {
         gpu_config.power_states = enabled_power_states;
 
         gpu_config
-    }
-
-    async fn dump_vbios(&self, sender: AsyncComponentSender<Self>) {
-        let file_chooser = FileChooserDialog::new(
-            Some("Save VBIOS file"),
-            Some(&self.root),
-            FileChooserAction::Save,
-            &[
-                ("Save", ResponseType::Accept),
-                ("Cancel", ResponseType::Cancel),
-            ],
-        );
-
-        let gpu_id = self.current_gpu_id().unwrap_or_default();
-        let file_name_suffix = gpu_id
-            .split_once('-')
-            .map(|(id, _)| id.replace(':', "_"))
-            .unwrap_or_default();
-        file_chooser.set_current_name(&format!("{file_name_suffix}_vbios_dump.rom"));
-        file_chooser.run_async(clone!(
-            #[strong]
-            sender,
-            move |diag, response| {
-                diag.close();
-
-                if response == gtk::ResponseType::Accept
-                    && let Some(file) = diag.file()
-                {
-                    if let Some(path) = file.path() {
-                        sender.output(AppMsg::DumpVBiosPath(path)).unwrap();
-                    }
-                }
-            }
-        ));
     }
 }

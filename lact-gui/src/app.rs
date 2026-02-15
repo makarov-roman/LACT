@@ -33,9 +33,9 @@ use lact_schema::{
     args::GuiArgs,
     config::GpuConfig,
     request::{ConfirmCommand, ProfileBase, SetClocksCommand},
-    DeviceStats, GIT_COMMIT,
+    GIT_COMMIT,
 };
-use msg::AppMsg;
+use msg::{AppMsg, AppContentMsg};
 use relm4::{
     component::AsyncComponentController,
     prelude::{AsyncComponent, AsyncComponentParts, AsyncController},
@@ -45,6 +45,8 @@ use std::{cell::RefCell, os::unix::net::UnixStream, rc::Rc, sync::Arc, time::Dur
 use tracing::{debug, error, info, warn};
 
 pub(crate) static APP_BROKER: MessageBroker<AppMsg> = MessageBroker::new();
+
+const NVIDIA_RECOMMENDED_MIN_VERSION: u32 = 560;
 
 pub struct AppModel {
     state: AppState,
@@ -254,6 +256,32 @@ impl AsyncComponent for AppModel {
         sender: AsyncComponentSender<Self>,
         root: &Self::Root,
     ) {
+        match msg {
+            AppMsg::Crash(message) => {
+                widgets.crash_page.set_label(&message);
+                widgets.loading_page.set_visible(false);
+                widgets.content_container.set_visible(false);
+                widgets.crash_page.set_visible(true);
+                self.state = AppState::Crashed;
+                return;
+            }
+            AppMsg::Error(err) if matches!(self.state, AppState::Loading) => {
+                self.state = AppState::Crashed;
+                widgets.crash_page.set_label(&format!("Failed to initialize: {err:#}"));
+                widgets.loading_page.set_visible(false);
+                widgets.crash_page.set_visible(true);
+                return;
+            }
+            AppMsg::LoadingStatus(status) => {
+                self.loading_status = status.clone();
+                if let AppState::Running { content, .. } = &self.state {
+                    content.emit(AppContentMsg::LoadingStatus(status));
+                }
+                return;
+            }
+            _ => {}
+        }
+
         match &mut self.state {
             AppState::Loading => {
                 match msg {
@@ -270,7 +298,7 @@ impl AsyncComponent for AppModel {
                             return;
                         }
 
-                        let (daemon_client, conn_err) = self.daemon_holder.borrow_mut().take().unwrap();
+                        let (daemon_client, conn_err) = self.daemon_holder.borrow_mut().take().expect("Daemon client missing during transition");
 
                         let content = AppContent::builder()
                             .launch(AppContentInit {
@@ -303,15 +331,6 @@ impl AsyncComponent for AppModel {
                             daemon_client,
                             stats_task_handle,
                         };
-                    }
-                    AppMsg::Error(err) => {
-                        self.state = AppState::Crashed;
-                        widgets.crash_page.set_label(&format!("Failed to initialize: {err:#}"));
-                        widgets.loading_page.set_visible(false);
-                        widgets.crash_page.set_visible(true);
-                    }
-                    AppMsg::LoadingStatus(status) => {
-                        self.loading_status = status;
                     }
                     _ => {}
                 }
@@ -520,7 +539,7 @@ impl AsyncComponent for AppModel {
 
                             match res {
                                 Ok(process_list) => {
-                                    content.emit(AppMsg::ProcessList(process_list));
+                                    content.emit(AppContentMsg::ProcessList(process_list));
                                 }
                                 Err(err) => warn!("could not fetch process list: {err:#}"),
                             }
@@ -540,7 +559,20 @@ impl AsyncComponent for AppModel {
                         }
                         sender.input(AppMsg::ReloadProfiles { state_sender: None });
                     }
-                    other => content.emit(other),
+                    AppMsg::ExportProfile(name) => {
+                        let content_sender = content.sender().clone();
+                        let daemon_client = daemon_client.clone();
+                        relm4::spawn_local(async move {
+                            match daemon_client.get_profile(name.clone()).await {
+                                Ok(Some(profile)) => {
+                                    content_sender.send(AppContentMsg::ExportProfileData(name, Box::new(profile))).unwrap();
+                                }
+                                Ok(None) => warn!("profile not found for export"),
+                                Err(err) => error!("could not fetch profile for export: {err:#}"),
+                            }
+                        });
+                    }
+                    other => content.emit(AppContentMsg::Action(other)),
                 }
             }
             AppState::Crashed => {}
@@ -551,7 +583,7 @@ impl AsyncComponent for AppModel {
 
 async fn reload_profiles(
     daemon_client: &DaemonClient,
-    content_sender: &relm4::Sender<AppMsg>,
+    content_sender: &relm4::Sender<AppContentMsg>,
     state_sender: Option<relm4::Sender<crate::app::header::profile_rule_window::profile_row::ProfileRuleRowMsg>>,
 ) -> anyhow::Result<()> {
     let mut profiles = daemon_client
@@ -564,7 +596,7 @@ async fn reload_profiles(
         let _ = sender.send(crate::app::header::profile_rule_window::profile_row::ProfileRuleRowMsg::WatcherState(state));
     }
 
-    content_sender.send(AppMsg::Profiles(Arc::new(profiles))).unwrap();
+    content_sender.send(AppContentMsg::Profiles(Arc::new(profiles))).unwrap();
 
     Ok(())
 }
@@ -572,20 +604,31 @@ async fn reload_profiles(
 async fn update_gpu_data_full(
     gpu_id: String,
     daemon_client: &DaemonClient,
-    content_sender: &relm4::Sender<AppMsg>,
+    content_sender: &relm4::Sender<AppContentMsg>,
     stats_task_handle: &mut Option<glib::JoinHandle<()>>,
 ) -> anyhow::Result<()> {
-    let info = daemon_client.get_device_info(&gpu_id).await?;
-    let stats = update_gpu_data(gpu_id.clone(), daemon_client, content_sender, stats_task_handle).await?;
+    let data = fetch_initial_gpu_data(daemon_client, &gpu_id).await?;
 
-    content_sender.send(AppMsg::GpuDataUpdate {
-        info: Some(Arc::new(info)),
-        stats: Some(stats),
-        clocks_table: daemon_client.get_device_clocks_info(&gpu_id).await.ok().and_then(|i| i.table),
-        profile_modes: daemon_client.get_device_power_profile_modes(&gpu_id).await.ok().map(Arc::new),
-        power_states: daemon_client.get_power_states(&gpu_id).await.ok(),
-        config: daemon_client.get_gpu_config(&gpu_id).await.ok().flatten(),
-    }).unwrap();
+    if let Some(handle) = stats_task_handle.take() {
+        handle.abort();
+    }
+
+    content_sender
+        .send(AppContentMsg::GpuDataUpdate {
+            info: Some(Arc::new(data.info)),
+            stats: Some(Arc::new(data.stats)),
+            clocks_table: data.clocks_table,
+            profile_modes: data.profile_modes,
+            power_states: data.power_states,
+            config: data.config,
+        })
+        .unwrap();
+
+    *stats_task_handle = Some(start_stats_update_loop(
+        gpu_id,
+        daemon_client.clone(),
+        content_sender.clone(),
+    ));
 
     Ok(())
 }
@@ -593,28 +636,58 @@ async fn update_gpu_data_full(
 async fn update_gpu_data(
     gpu_id: String,
     daemon_client: &DaemonClient,
-    content_sender: &relm4::Sender<AppMsg>,
+    content_sender: &relm4::Sender<AppContentMsg>,
     stats_task_handle: &mut Option<glib::JoinHandle<()>>,
-) -> anyhow::Result<Arc<DeviceStats>> {
+) -> anyhow::Result<()> {
     if let Some(handle) = stats_task_handle.take() {
         handle.abort();
     }
 
     let stats = daemon_client.get_device_stats(&gpu_id).await?;
     let stats = Arc::new(stats);
-    
-    content_sender.send(AppMsg::Stats(stats.clone())).unwrap();
 
-    *stats_task_handle = Some(start_stats_update_loop(gpu_id, daemon_client.clone(), content_sender.clone()));
+    content_sender
+        .send(AppContentMsg::Stats(stats.clone()))
+        .unwrap();
 
-    Ok(stats)
+    let clocks_table = daemon_client
+        .get_device_clocks_info(&gpu_id)
+        .await
+        .ok()
+        .and_then(|i| i.table);
+    let profile_modes = daemon_client
+        .get_device_power_profile_modes(&gpu_id)
+        .await
+        .ok()
+        .map(Arc::new);
+    let power_states = daemon_client.get_power_states(&gpu_id).await.ok();
+    let config = daemon_client.get_gpu_config(&gpu_id).await.ok().flatten();
+
+    content_sender
+        .send(AppContentMsg::GpuDataUpdate {
+            info: None,
+            stats: Some(stats),
+            clocks_table,
+            profile_modes,
+            power_states,
+            config,
+        })
+        .unwrap();
+
+    *stats_task_handle = Some(start_stats_update_loop(
+        gpu_id,
+        daemon_client.clone(),
+        content_sender.clone(),
+    ));
+
+    Ok(())
 }
 
 async fn apply_settings(
     gpu_id: String,
     ui_config: GpuConfig,
     daemon_client: &DaemonClient,
-    content_sender: &relm4::Sender<AppMsg>,
+    content_sender: &relm4::Sender<AppContentMsg>,
     root: &ApplicationWindow,
 ) -> anyhow::Result<()> {
     let mut gpu_config = daemon_client
@@ -650,7 +723,7 @@ async fn apply_settings(
     let delay = daemon_client.set_gpu_config(&gpu_id, gpu_config).await?;
     ask_settings_confirmation(delay, daemon_client, content_sender, root).await;
     
-    content_sender.send(AppMsg::ReloadData { full: false }).unwrap();
+    content_sender.send(AppContentMsg::Action(AppMsg::ReloadData { full: false })).unwrap();
 
     Ok(())
 }
@@ -658,7 +731,7 @@ async fn apply_settings(
 async fn ask_settings_confirmation(
     mut delay: u64,
     daemon_client: &DaemonClient,
-    content_sender: &relm4::Sender<AppMsg>,
+    content_sender: &relm4::Sender<AppContentMsg>,
     root: &ApplicationWindow,
 ) {
     let text = confirmation_text(delay);
@@ -691,7 +764,7 @@ async fn ask_settings_confirmation(
 
                 if delay == 0 {
                     dialog.hide();
-                    let _ = content_sender.send(AppMsg::ReloadData { full: false });
+                    let _ = content_sender.send(AppContentMsg::Action(AppMsg::ReloadData { full: false }));
                     ControlFlow::Break
                 } else {
                     ControlFlow::Continue
@@ -714,7 +787,7 @@ async fn ask_settings_confirmation(
         let content_sender = content_sender.clone();
         relm4::spawn_local(async move {
             let _ = daemon_client.confirm_pending_config(command).await;
-            let _ = content_sender.send(AppMsg::ReloadData { full: false });
+            let _ = content_sender.send(AppContentMsg::Action(AppMsg::ReloadData { full: false }));
         });
     });
 }
@@ -849,9 +922,9 @@ async fn fetch_initial_gpu_data(
             .split('.')
             .next()
             .and_then(|version| version.parse::<u32>().ok())
-        && major_version < 560
+        && major_version < NVIDIA_RECOMMENDED_MIN_VERSION
     {
-        return Err(anyhow!("Old Nvidia driver version detected ({major_version}), some features might be missing. Driver version 560 or newer is recommended."));
+        return Err(anyhow!("Old Nvidia driver version detected ({major_version}), some features might be missing. Driver version {NVIDIA_RECOMMENDED_MIN_VERSION} or newer is recommended."));
     }
 
     let stats = client
@@ -895,7 +968,7 @@ async fn fetch_initial_gpu_data(
 fn start_stats_update_loop(
     gpu_id: String,
     daemon_client: DaemonClient,
-    content_sender: relm4::Sender<AppMsg>,
+    content_sender: relm4::Sender<AppContentMsg>,
 ) -> glib::JoinHandle<()> {
     debug!("spawning new stats update task");
     relm4::spawn_local(async move {
@@ -905,7 +978,7 @@ fn start_stats_update_loop(
 
             match daemon_client.get_device_stats(&gpu_id).await {
                 Ok(stats) => {
-                    let _ = content_sender.send(AppMsg::Stats(Arc::new(stats)));
+                    let _ = content_sender.send(AppContentMsg::Stats(Arc::new(stats)));
                 }
                 Err(err) => {
                     error!("could not fetch stats: {err:#}");
@@ -914,7 +987,7 @@ fn start_stats_update_loop(
 
             match daemon_client.list_profiles(false).await {
                 Ok(profiles) => {
-                    let _ = content_sender.send(AppMsg::Profiles(Arc::new(profiles)));
+                    let _ = content_sender.send(AppContentMsg::Profiles(Arc::new(profiles)));
                 }
                 Err(err) => {
                     error!("could not fetch profile info: {err:#}");

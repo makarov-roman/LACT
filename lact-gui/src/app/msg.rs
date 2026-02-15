@@ -12,11 +12,9 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum AppMsg {
-    Error(Arc<anyhow::Error>),
     ReloadData {
         full: bool,
     },
-    Stats(Arc<DeviceStats>),
     ApplyChanges,
     RevertChanges,
     SettingsChanged,
@@ -51,20 +49,23 @@ pub enum AppMsg {
     ImportProfile,
     ExportProfile(Option<String>),
     ConnectionStatus(ConnectionStatusMsg),
-    AskConfirmation(ConfirmationOptions, Box<AppMsg>),
-    Crash(String),
     DataLoaded {
         system_info: SystemInfo,
         devices: Vec<DeviceListEntry>,
         initial_gpu: Option<(String, InitialGpuData)>,
         profiles: Arc<lact_schema::ProfilesInfo>,
     },
-    LoadingStatus(String),
+    Error(Arc<anyhow::Error>),
     ImportProfilePath(std::path::PathBuf),
     DumpVBiosPath(std::path::PathBuf),
     ApplyConfig(String, Box<lact_schema::config::GpuConfig>),
-    Profiles(Arc<lact_schema::ProfilesInfo>),
-    ProcessList(lact_schema::ProcessList),
+    Crash(String),
+    LoadingStatus(String),
+    AskConfirmation(ConfirmationOptions, Box<AppMsg>),
+}
+
+#[derive(Debug, Clone)]
+pub enum AppContentMsg {
     GpuDataUpdate {
         info: Option<Arc<lact_schema::DeviceInfo>>,
         stats: Option<Arc<lact_schema::DeviceStats>>,
@@ -74,6 +75,23 @@ pub enum AppMsg {
         power_states: Option<lact_schema::PowerStates>,
         config: Option<lact_schema::config::GpuConfig>,
     },
+    Stats(Arc<DeviceStats>),
+    Profiles(Arc<lact_schema::ProfilesInfo>),
+    ProcessList(lact_schema::ProcessList),
+    LoadingStatus(String),
+    Error(Arc<anyhow::Error>),
+    UiCommand(UiCommand),
+    Action(AppMsg),
+    Crash(String),
+    ExportProfileData(Option<String>, Box<lact_schema::config::Profile>),
+}
+
+#[derive(Debug, Clone)]
+pub enum UiCommand {
+    ShowGraphs,
+    ShowProcessMonitor,
+    ShowOverdriveDialog,
+    AskConfirmation(ConfirmationOptions, AppMsg),
 }
 
 impl AppMsg {
@@ -82,7 +100,7 @@ impl AppMsg {
         title: String,
         message: impl Into<String>,
         buttons_type: gtk::ButtonsType,
-    ) -> Self {
+    ) -> AppMsg {
         Self::AskConfirmation(
             ConfirmationOptions {
                 title,
