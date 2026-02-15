@@ -10,7 +10,7 @@ use relm4_components::save_dialog::{SaveDialog, SaveDialogMsg, SaveDialogRespons
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tracing::{trace, error};
 
-use super::{apply_revealer::{ApplyRevealer, ApplyRevealerMsg}, confirmation_dialog::ConfirmationDialog, ext::RelmDefaultLauchable, graphs_window::{GraphsWindow, GraphsWindowMsg}, header::{Header, HeaderMsg}, pages::{PageUpdate, crash_page::CrashPage, info_page::InformationPage, oc_page::{OcPage, OcPageMsg}, software_page::{SoftwarePage, SoftwarePageMsg}, thermals_page::{ThermalsPage, ThermalsPageMsg}}, msg::{AppMsg, AppContentMsg, UiCommand}, show_error, show_embedded_info};
+use super::{apply_revealer::{ApplyRevealer, ApplyRevealerMsg}, confirmation_dialog::ConfirmationDialog, ext::RelmDefaultLauchable, graphs_window::{GraphsWindow, GraphsWindowMsg}, header::{Header, HeaderMsg}, pages::{PageUpdate, info_page::InformationPage, oc_page::{OcPage, OcPageMsg}, software_page::{SoftwarePage, SoftwarePageMsg}, thermals_page::{ThermalsPage, ThermalsPageMsg}}, msg::{AppMsg, AppContentMsg, UiCommand}, show_error, show_embedded_info};
 
 const PROCESS_POLL_INTERVAL_MS: u64 = 1500;
 
@@ -43,7 +43,6 @@ pub struct AppContent {
     pub oc_page: relm4::Controller<OcPage>,
     pub thermals_page: relm4::Controller<ThermalsPage>,
     pub software_page: relm4::Controller<SoftwarePage>,
-    pub crash_page: relm4::Controller<CrashPage>,
     pub header: relm4::Controller<Header>,
     pub apply_revealer: relm4::Controller<ApplyRevealer>,
     pub root: gtk::ApplicationWindow,
@@ -81,17 +80,14 @@ impl AsyncComponent for AppContent {
                     add_titled[Some("oc_page"), &fl!(I18N, "oc-page")] = model.oc_page.widget(),
                     add_titled[Some("thermals_page"), &fl!(I18N, "thermals-page")] = model.thermals_page.widget(),
                     add_titled[Some("software_page"), &fl!(I18N, "software-page")] = model.software_page.widget(),
-                    add_named[Some("crash_page")] = model.crash_page.widget(),
 
                     set_visible_child_name: &CONFIG.read().selected_tab,
                     connect_visible_child_name_notify => move |stack| {
                         if let Some(name) = stack.visible_child_name() {
                             let name = name.to_string();
-                            if name != "crash_page" {
-                                CONFIG.write().edit(|config| {
-                                    config.selected_tab = name;
-                                });
-                            }
+                            CONFIG.write().edit(|config| {
+                                config.selected_tab = name;
+                            });
                         }
                     },
                 },
@@ -126,10 +122,6 @@ impl AsyncComponent for AppContent {
         let software_page = SoftwarePage::builder()
             .launch((system_info.clone(), embedded))
             .detach();
-
-        let crash_page = CrashPage::builder()
-            .launch(String::new())
-            .forward(sender.input_sender(), AppContentMsg::Action);
 
         let overdrive_dialog = OverdriveDialog::builder()
             .transient_for(&window)
@@ -166,7 +158,6 @@ impl AsyncComponent for AppContent {
             oc_page,
             thermals_page,
             software_page,
-            crash_page,
             apply_revealer,
             ui_sensitive: ui_sensitive.clone(),
             header,
@@ -248,7 +239,7 @@ impl AppContent {
         &mut self,
         msg: AppContentMsg,
         sender: AsyncComponentSender<Self>,
-        widgets: &<Self as AsyncComponent>::Widgets,
+        _widgets: &<Self as AsyncComponent>::Widgets,
     ) -> Result<(), Arc<anyhow::Error>> {
         match msg {
             AppContentMsg::Error(err) => return Err(err),
@@ -401,7 +392,7 @@ impl AppContent {
                     sender.input(AppContentMsg::UiCommand(UiCommand::AskConfirmation(options, *confirmed_msg)))
                 }
                 AppMsg::Crash(message) => {
-                    sender.input(AppContentMsg::Crash(message));
+                    sender.output(AppMsg::Crash(message)).unwrap();
                 }
                 AppMsg::DumpVBios => {
                     let file_chooser = FileChooserDialog::new(
@@ -438,14 +429,6 @@ impl AppContent {
                 }
                 other => sender.output(other).unwrap(),
             },
-            AppContentMsg::Crash(message) => {
-                self.header.widget().set_sensitive(false);
-                self.apply_revealer.widget().set_sensitive(false);
-
-                self.ui_sensitive.set_value(true);
-                widgets.root_stack.set_visible_child_name("crash_page");
-                self.crash_page.emit(message);
-            }
             AppContentMsg::ExportProfileData(name, profile) => {
                 let settings = SaveDialogSettings {
                     create_folders: true,

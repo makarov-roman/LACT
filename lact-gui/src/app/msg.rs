@@ -82,7 +82,6 @@ pub enum AppContentMsg {
     Error(Arc<anyhow::Error>),
     UiCommand(UiCommand),
     Action(AppMsg),
-    Crash(String),
     ExportProfileData(Option<String>, Box<lact_schema::config::Profile>),
 }
 

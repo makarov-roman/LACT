@@ -18,6 +18,7 @@ pub(crate) mod styles;
 use crate::{
     app::{
         app_content::{AppContent, AppContentInit, InitialGpuData},
+        pages::crash_page::CrashPage,
     },
     APP_ID, GUI_VERSION, I18N,
 };
@@ -39,7 +40,7 @@ use msg::{AppMsg, AppContentMsg};
 use relm4::{
     component::AsyncComponentController,
     prelude::{AsyncComponent, AsyncComponentParts, AsyncController},
-    AsyncComponentSender, MessageBroker, RelmWidgetExt,
+    AsyncComponentSender, MessageBroker, RelmWidgetExt, Component, ComponentController,
 };
 use std::{cell::RefCell, os::unix::net::UnixStream, rc::Rc, sync::Arc, time::Duration};
 use tracing::{debug, error, info, warn};
@@ -53,6 +54,7 @@ pub struct AppModel {
     daemon_holder: Rc<RefCell<Option<(DaemonClient, Option<Arc<anyhow::Error>>)>>>,
     loading_status: String,
     selected_gpu_id: Option<String>,
+    crash_page: relm4::Controller<CrashPage>,
 }
 
 enum AppState {
@@ -93,6 +95,9 @@ impl AsyncComponent for AppModel {
                         set_valign: gtk::Align::Center,
                         set_spacing: 12,
 
+                        #[watch]
+                        set_visible: matches!(model.state, AppState::Loading),
+
                         gtk::Spinner {
                             set_spinning: true,
                             set_size_request: (48, 48),
@@ -108,16 +113,15 @@ impl AsyncComponent for AppModel {
                     gtk::Box {
                         set_orientation: gtk::Orientation::Vertical,
                         set_vexpand: true,
+
+                        #[watch]
+                        set_visible: matches!(model.state, AppState::Running { .. }),
                     },
 
-                    #[name = "crash_page"]
-                    gtk::Label {
-                        set_vexpand: true,
-                        set_valign: gtk::Align::Center,
-                        set_halign: gtk::Align::Center,
-                        set_margin_all: 20,
-                        set_wrap: true,
-                        set_selectable: true,
+                    #[local_ref]
+                    crash_page_widget -> gtk::Box {
+                        #[watch]
+                        set_visible: matches!(model.state, AppState::Crashed),
                     },
                 }
             },
@@ -233,18 +237,20 @@ impl AsyncComponent for AppModel {
             }
         ));
 
+        let crash_page = CrashPage::builder()
+            .launch(String::new())
+            .forward(sender.input_sender(), |msg| msg);
+
         let model = AppModel {
             state: AppState::Loading,
             daemon_holder,
             loading_status: fl!(I18N, "connecting-to-daemon"),
             selected_gpu_id: None,
+            crash_page,
         };
 
+        let crash_page_widget = model.crash_page.widget();
         let widgets = view_output!();
-
-        widgets.loading_page.set_visible(true);
-        widgets.content_container.set_visible(false);
-        widgets.crash_page.set_visible(false);
 
         AsyncComponentParts { model, widgets }
     }
@@ -258,18 +264,15 @@ impl AsyncComponent for AppModel {
     ) {
         match msg {
             AppMsg::Crash(message) => {
-                widgets.crash_page.set_label(&message);
-                widgets.loading_page.set_visible(false);
-                widgets.content_container.set_visible(false);
-                widgets.crash_page.set_visible(true);
+                self.crash_page.emit(message);
                 self.state = AppState::Crashed;
+                self.update_view(widgets, sender);
                 return;
             }
             AppMsg::Error(err) if matches!(self.state, AppState::Loading) => {
+                self.crash_page.emit(format!("Failed to initialize: {err:#}"));
                 self.state = AppState::Crashed;
-                widgets.crash_page.set_label(&format!("Failed to initialize: {err:#}"));
-                widgets.loading_page.set_visible(false);
-                widgets.crash_page.set_visible(true);
+                self.update_view(widgets, sender);
                 return;
             }
             AppMsg::LoadingStatus(status) => {
@@ -277,6 +280,7 @@ impl AsyncComponent for AppModel {
                 if let AppState::Running { content, .. } = &self.state {
                     content.emit(AppContentMsg::LoadingStatus(status));
                 }
+                self.update_view(widgets, sender);
                 return;
             }
             _ => {}
@@ -313,7 +317,7 @@ impl AsyncComponent for AppModel {
                             .forward(sender.input_sender(), |msg| msg);
 
                         let content_widgets = content.widget();
-                        root.set_child(Some(content_widgets));
+                        widgets.content_container.append(content_widgets);
 
                         let initial_gpu_id = initial_gpu.as_ref().map(|(id, _)| id.clone());
                         self.selected_gpu_id = initial_gpu_id.clone();
