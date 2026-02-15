@@ -60,6 +60,20 @@ pub enum AppMsg {
         profiles: Arc<lact_schema::ProfilesInfo>,
     },
     LoadingStatus(String),
+    ImportProfilePath(std::path::PathBuf),
+    DumpVBiosPath(std::path::PathBuf),
+    ApplyConfig(String, Box<lact_schema::config::GpuConfig>),
+    Profiles(Arc<lact_schema::ProfilesInfo>),
+    ProcessList(lact_schema::ProcessList),
+    GpuDataUpdate {
+        info: Option<Arc<lact_schema::DeviceInfo>>,
+        stats: Option<Arc<lact_schema::DeviceStats>>,
+        clocks_table: Option<lact_schema::ClocksTable>,
+        profile_modes:
+            Option<Arc<amdgpu_sysfs::gpu_handle::power_profile_mode::PowerProfileModesTable>>,
+        power_states: Option<lact_schema::PowerStates>,
+        config: Option<lact_schema::config::GpuConfig>,
+    },
 }
 
 impl AppMsg {
