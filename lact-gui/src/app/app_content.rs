@@ -1,16 +1,15 @@
 use crate::{CONFIG, I18N, app::{overdrive_dialog::{OverdriveDialog, OverdriveDialogMsg}, process_monitor::{ProcessMonitorWindow, ProcessMonitorWindowMsg}}};
 use anyhow::Context;
-use gtk::{glib::clone, prelude::{Cast, DialogExtManual, FileChooserExt, FileExt, GtkWindowExt, OrientableExt, WidgetExt}, FileChooserAction, FileChooserDialog, ResponseType};
+use gtk::prelude::{Cast, GtkWindowExt, OrientableExt, WidgetExt};
 use i18n_embed_fl::fl;
 use lact_schema::{DeviceStats, config::GpuConfig, DeviceListEntry, ClocksTable, PowerStates, ProfilesInfo, DeviceInfo, SystemInfo};
 use amdgpu_sysfs::gpu_handle::power_profile_mode::PowerProfileModesTable;
 use relm4::{AsyncComponentSender, Component, ComponentController, RelmObjectExt, binding::BoolBinding, prelude::{AsyncComponent, AsyncComponentParts}, tokio::time::sleep};
-use relm4_components::open_dialog::{OpenDialog, OpenDialogMsg, OpenDialogResponse, OpenDialogSettings};
 use relm4_components::save_dialog::{SaveDialog, SaveDialogMsg, SaveDialogResponse, SaveDialogSettings};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tracing::{trace, error};
 
-use super::{apply_revealer::{ApplyRevealer, ApplyRevealerMsg}, confirmation_dialog::ConfirmationDialog, ext::RelmDefaultLauchable, graphs_window::{GraphsWindow, GraphsWindowMsg}, header::{Header, HeaderMsg}, pages::{PageUpdate, info_page::InformationPage, oc_page::{OcPage, OcPageMsg}, software_page::{SoftwarePage, SoftwarePageMsg}, thermals_page::{ThermalsPage, ThermalsPageMsg}}, msg::{AppMsg, AppContentMsg, UiCommand}, show_error, show_embedded_info};
+use super::{apply_revealer::{ApplyRevealer, ApplyRevealerMsg}, ext::RelmDefaultLauchable, graphs_window::{GraphsWindow, GraphsWindowMsg}, header::{Header, HeaderMsg}, pages::{PageUpdate, info_page::InformationPage, oc_page::{OcPage, OcPageMsg}, software_page::{SoftwarePage, SoftwarePageMsg}, thermals_page::{ThermalsPage, ThermalsPageMsg}}, msg::{AppMsg, AppContentMsg, UiCommand}, show_error, show_embedded_info};
 
 const PROCESS_POLL_INTERVAL_MS: u64 = 1500;
 
@@ -48,17 +47,12 @@ pub struct AppContent {
     pub root: gtk::ApplicationWindow,
 }
 
-#[derive(Debug)]
-pub enum CommandOutput {
-    ProfileImport(PathBuf),
-}
-
 #[relm4::component(pub, async)]
 impl AsyncComponent for AppContent {
     type Init = AppContentInit;
     type Input = AppContentMsg;
     type Output = AppMsg;
-    type CommandOutput = Option<CommandOutput>;
+    type CommandOutput = ();
 
     view! {
         #[root]
@@ -222,15 +216,10 @@ impl AsyncComponent for AppContent {
 
     async fn update_cmd(
         &mut self,
-        msg: Self::CommandOutput,
-        sender: AsyncComponentSender<Self>,
+        _msg: Self::CommandOutput,
+        _sender: AsyncComponentSender<Self>,
         _root: &Self::Root,
     ) {
-        if let Some(msg) = msg
-            && let Err(err) = self.handle_cmd_output(msg, &sender).await
-        {
-            sender.input(AppContentMsg::Error(Arc::new(err.into())));
-        }
     }
 }
 
@@ -242,7 +231,6 @@ impl AppContent {
         _widgets: &<Self as AsyncComponent>::Widgets,
     ) -> Result<(), Arc<anyhow::Error>> {
         match msg {
-            AppContentMsg::Error(err) => return Err(err),
             AppContentMsg::LoadingStatus(status) => {
                 trace!("loading status: {status}");
             }
@@ -340,17 +328,6 @@ impl AppContent {
                 UiCommand::ShowGraphs => self.graphs_window.emit(GraphsWindowMsg::Show),
                 UiCommand::ShowProcessMonitor => self.process_monitor_window.emit(ProcessMonitorWindowMsg::Show),
                 UiCommand::ShowOverdriveDialog => self.overdrive_dialog.emit(OverdriveDialogMsg::Show),
-                UiCommand::AskConfirmation(options, confirmed_msg) => {
-                    let sender = sender.clone();
-                    let mut controller = ConfirmationDialog::builder()
-                        .launch((options, self.root.clone()))
-                        .connect_receiver(move |_, response| {
-                            if let gtk::ResponseType::Ok | gtk::ResponseType::Yes = response {
-                                sender.input(AppContentMsg::Action(confirmed_msg.clone()));
-                            }
-                        });
-                    controller.detach_runtime();
-                }
             },
             AppContentMsg::Action(action) => match action {
                 AppMsg::ApplyChanges => {
@@ -367,65 +344,6 @@ impl AppContent {
                 AppMsg::ReloadData { .. } => {
                     self.apply_revealer.emit(ApplyRevealerMsg::Hide);
                     sender.output(action).unwrap();
-                }
-                AppMsg::ImportProfile => {
-                    let json_filter = gtk::FileFilter::new();
-                    json_filter.add_mime_type("application/json");
-
-                    let settings = OpenDialogSettings {
-                        filters: vec![json_filter],
-                        ..Default::default()
-                    };
-                    let file_picker = OpenDialog::builder().launch(settings);
-                    file_picker.emit(OpenDialogMsg::Open);
-                    let stream = file_picker.into_stream();
-
-                    sender.oneshot_command(async move {
-                        if let Some(OpenDialogResponse::Accept(path)) = stream.recv_one().await {
-                            Some(CommandOutput::ProfileImport(path))
-                        } else {
-                            None
-                        }
-                    });
-                }
-                AppMsg::AskConfirmation(options, confirmed_msg) => {
-                    sender.input(AppContentMsg::UiCommand(UiCommand::AskConfirmation(options, *confirmed_msg)))
-                }
-                AppMsg::Crash(message) => {
-                    sender.output(AppMsg::Crash(message)).unwrap();
-                }
-                AppMsg::DumpVBios => {
-                    let file_chooser = FileChooserDialog::new(
-                        Some("Save VBIOS file"),
-                        Some(&self.root),
-                        FileChooserAction::Save,
-                        &[
-                            ("Save", ResponseType::Accept),
-                            ("Cancel", ResponseType::Cancel),
-                        ],
-                    );
-
-                    let gpu_id = self.current_gpu_id().unwrap_or_default();
-                    let file_name_suffix = gpu_id
-                        .split_once('-')
-                        .map(|(id, _)| id.replace(':', "_"))
-                        .unwrap_or_default();
-                    file_chooser.set_current_name(&format!("{file_name_suffix}_vbios_dump.rom"));
-                    file_chooser.run_async(clone!(
-                        #[strong]
-                        sender,
-                        move |diag, response| {
-                            diag.close();
-
-                            if response == gtk::ResponseType::Accept
-                                && let Some(file) = diag.file()
-                            {
-                                if let Some(path) = file.path() {
-                                    sender.output(AppMsg::DumpVBiosPath(path)).unwrap();
-                                }
-                            }
-                        }
-                    ));
                 }
                 other => sender.output(other).unwrap(),
             },
@@ -452,24 +370,9 @@ impl AppContent {
                             error!("Could not export profile: {err:#}");
                         }
                     }
-                    None
                 });
             }
         }
-        Ok(())
-    }
-
-    async fn handle_cmd_output(
-        &mut self,
-        msg: CommandOutput,
-        sender: &AsyncComponentSender<AppContent>,
-    ) -> anyhow::Result<()> {
-        match msg {
-            CommandOutput::ProfileImport(path) => {
-                sender.output(AppMsg::ImportProfilePath(path)).unwrap();
-            }
-        }
-
         Ok(())
     }
 

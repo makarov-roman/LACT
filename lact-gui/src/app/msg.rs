@@ -79,7 +79,6 @@ pub enum AppContentMsg {
     Profiles(Arc<lact_schema::ProfilesInfo>),
     ProcessList(lact_schema::ProcessList),
     LoadingStatus(String),
-    Error(Arc<anyhow::Error>),
     UiCommand(UiCommand),
     Action(AppMsg),
     ExportProfileData(Option<String>, Box<lact_schema::config::Profile>),
@@ -90,7 +89,6 @@ pub enum UiCommand {
     ShowGraphs,
     ShowProcessMonitor,
     ShowOverdriveDialog,
-    AskConfirmation(ConfirmationOptions, AppMsg),
 }
 
 impl AppMsg {
