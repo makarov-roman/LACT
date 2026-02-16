@@ -178,7 +178,8 @@ impl relm4::Component for OcPage {
                 self.clocks_frame.emit(ClocksFrameMsg::Clocks(table));
             }
             OcPageMsg::ProfileModesTable(modes_table) => {
-                self.performance_frame.emit(PerformanceFrameMsg::PowerProfileModes(modes_table));
+                self.performance_frame
+                    .emit(PerformanceFrameMsg::PowerProfileModes(modes_table));
             }
             OcPageMsg::PowerStates {
                 pstates,
