@@ -121,6 +121,8 @@ impl AsyncComponent for AppContent {
             .transient_for(&window)
             .launch(OverdriveDialog {
                 system_info: system_info.clone(),
+                is_loading: false,
+                is_done: false,
             })
             .detach();
 
@@ -328,6 +330,8 @@ impl AppContent {
                 UiCommand::ShowGraphs => self.graphs_window.emit(GraphsWindowMsg::Show),
                 UiCommand::ShowProcessMonitor => self.process_monitor_window.emit(ProcessMonitorWindowMsg::Show),
                 UiCommand::ShowOverdriveDialog => self.overdrive_dialog.emit(OverdriveDialogMsg::Show),
+                UiCommand::OverdriveLoading => self.overdrive_dialog.emit(OverdriveDialogMsg::Loading),
+                UiCommand::OverdriveLoaded => self.overdrive_dialog.emit(OverdriveDialogMsg::Loaded),
             },
             AppContentMsg::Action(action) => match action {
                 AppMsg::ApplyChanges => {

@@ -89,6 +89,8 @@ pub enum UiCommand {
     ShowGraphs,
     ShowProcessMonitor,
     ShowOverdriveDialog,
+    OverdriveLoading,
+    OverdriveLoaded,
 }
 
 impl AppMsg {

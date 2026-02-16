@@ -1,6 +1,6 @@
 use crate::{
-    app::{msg::AppMsg, APP_BROKER},
     I18N,
+    app::{APP_BROKER, msg::AppMsg},
 };
 use gtk::{
     pango,
@@ -13,11 +13,15 @@ use relm4::{ComponentParts, ComponentSender, RelmWidgetExt};
 
 pub struct OverdriveDialog {
     pub system_info: SystemInfo,
+    pub is_loading: bool,
+    pub is_done: bool,
 }
 
 #[derive(Debug)]
 pub enum OverdriveDialogMsg {
     Show,
+    Loading,
+    Loaded,
 }
 
 #[relm4::component(pub)]
@@ -78,7 +82,7 @@ impl relm4::Component for OverdriveDialog {
 
                     gtk::Button {
                         #[watch]
-                        set_sensitive: model.system_info.amdgpu_overdrive_enabled == Some(false),
+                        set_sensitive: model.system_info.amdgpu_overdrive_enabled == Some(false) && !model.is_loading && !model.is_done,
                         set_label: &fl!(I18N, "enable-amd-oc"),
                         connect_clicked => move |_| {
                             APP_BROKER.send(AppMsg::EnableOverdrive);
@@ -87,12 +91,24 @@ impl relm4::Component for OverdriveDialog {
 
                     gtk::Button {
                         #[watch]
-                        set_sensitive: model.system_info.amdgpu_overdrive_enabled == Some(true),
+                        set_sensitive: model.system_info.amdgpu_overdrive_enabled == Some(true) && !model.is_loading && !model.is_done,
                         set_label: &fl!(I18N, "disable-amd-oc"),
                         connect_clicked => move |_| {
                             APP_BROKER.send(AppMsg::DisableOverdrive);
                         },
                     },
+                },
+
+                gtk::Label {
+                    #[watch]
+                    set_visible: model.is_loading,
+                    set_label: &fl!(I18N, "amd-oc-updating-configuration"),
+                },
+
+                gtk::Label {
+                    #[watch]
+                    set_visible: model.is_done,
+                    set_label: &fl!(I18N, "amd-oc-updating-done"),
                 },
             },
         }
@@ -117,6 +133,11 @@ impl relm4::Component for OverdriveDialog {
     ) {
         match msg {
             OverdriveDialogMsg::Show => root.present(),
+            OverdriveDialogMsg::Loading => self.is_loading = true,
+            OverdriveDialogMsg::Loaded => {
+                self.is_loading = false;
+                self.is_done = true;
+            }
         }
 
         self.update_view(widgets, sender);

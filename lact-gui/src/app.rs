@@ -37,7 +37,7 @@ use lact_schema::{
     request::{ConfirmCommand, ProfileBase, SetClocksCommand},
     GIT_COMMIT,
 };
-use msg::{AppMsg, AppContentMsg};
+use msg::{AppMsg, AppContentMsg, UiCommand};
 use relm4::{
     component::AsyncComponentController,
     prelude::{AsyncComponent, AsyncComponentParts, AsyncController},
@@ -570,11 +570,17 @@ impl AppModel {
                     diag.run_async(|diag, _| diag.hide());
                 }
                 AppMsg::EnableOverdrive => {
-                    daemon_client.enable_overdrive().await?;
+                    content.emit(AppContentMsg::UiCommand(UiCommand::OverdriveLoading));
+                    let result = daemon_client.enable_overdrive().await;
+                    content.emit(AppContentMsg::UiCommand(UiCommand::OverdriveLoaded));
+                    result?;
                     sender.input(AppMsg::ReloadData { full: true });
                 }
                 AppMsg::DisableOverdrive => {
-                    daemon_client.disable_overdrive().await?;
+                    content.emit(AppContentMsg::UiCommand(UiCommand::OverdriveLoading));
+                    let result = daemon_client.disable_overdrive().await;
+                    content.emit(AppContentMsg::UiCommand(UiCommand::OverdriveLoaded));
+                    result?;
                     sender.input(AppMsg::ReloadData { full: true });
                 }
                 AppMsg::ResetConfig => {

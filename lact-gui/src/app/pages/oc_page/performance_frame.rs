@@ -144,7 +144,7 @@ impl relm4::Component for PerformanceFrame {
                                         }
                                 } @ power_profile_selected_handler,
 
-                                 #[watch]
+                                #[watch]
                                 #[block_signal(power_profile_selected_handler)]
                                 select_row: model.power_profile_active_mode.and_then(|idx| modes_listbox.row_at_index(idx.into())).as_ref(),
                             },
