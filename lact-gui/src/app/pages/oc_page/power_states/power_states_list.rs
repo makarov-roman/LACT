@@ -11,7 +11,6 @@ use relm4::{
 pub struct PowerStatesList {
     states: FactoryVecDeque<PowerStateRow>,
     value_suffix: String,
-    is_active_indicator_visible: BoolBinding,
     configurable: BoolBinding,
 }
 
@@ -60,7 +59,6 @@ impl relm4::SimpleComponent for PowerStatesList {
         let model = Self {
             states,
             value_suffix: opts.value_suffix,
-            is_active_indicator_visible: BoolBinding::new(false),
             configurable: BoolBinding::new(true),
         };
 
@@ -89,8 +87,6 @@ impl relm4::SimpleComponent for PowerStatesList {
                 }
             }
             PowerStatesListMsg::ActiveState(active_idx) => {
-                self.is_active_indicator_visible
-                    .set_value(active_idx.is_some());
                 for (i, row) in self.states.iter().enumerate() {
                     let is_active = row
                         .power_state

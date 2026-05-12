@@ -81,14 +81,10 @@ impl relm4::SimpleComponent for PowerStatesFrame {
                     set_orientation: gtk::Orientation::Horizontal,
 
                     gtk::Box {
-                        #[watch]
-                        set_visible: !model.core_states_list.model().is_empty(),
                         append = model.core_states_list.widget(),
                     },
 
                     gtk::Box {
-                        #[watch]
-                        set_visible: !model.vram_states_list.model().is_empty(),
                         append = model.vram_states_list.widget(),
                     },
                 }
