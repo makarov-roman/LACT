@@ -1,7 +1,7 @@
 use crate::app::pages::oc_page::power_states::power_states_row::{
     PowerStateRow, PowerStateRowMsg, PowerStateRowOptions,
 };
-use gtk::prelude::{FrameExt, WidgetExt};
+use adw::prelude::*;
 use lact_schema::PowerState;
 use relm4::{
     ComponentParts, ComponentSender, RelmWidgetExt, binding::BoolBinding, css,
@@ -36,6 +36,7 @@ impl relm4::SimpleComponent for PowerStatesList {
     view! {
         gtk::Frame {
             set_hexpand: true,
+            set_label_align: 0.5,
             #[wrap(Some)]
             set_label_widget = &gtk::Label {
                 set_label: &opts.title,
@@ -82,7 +83,6 @@ impl relm4::SimpleComponent for PowerStatesList {
                         power_state,
                         value_suffix: self.value_suffix.clone(),
                         active: false,
-                        show_active_indicator: self.is_active_indicator_visible.clone(),
                         configurable: self.configurable.clone(),
                     };
                     states.push_back(opts);

@@ -9,14 +9,12 @@ pub struct PowerStateRow {
     pub(super) power_state: PowerState,
     value_suffix: String,
     configurable: BoolBinding,
-    show_active_indicator: BoolBinding,
 }
 
 pub struct PowerStateRowOptions {
     pub power_state: PowerState,
     pub value_suffix: String,
     pub active: bool,
-    pub show_active_indicator: BoolBinding,
     pub configurable: BoolBinding,
 }
 
@@ -42,9 +40,9 @@ impl relm4::factory::FactoryComponent for PowerStateRow {
 
              append: image = &gtk::Image {
                 set_icon_name: Some("pan-end-symbolic"),
-                add_binding: (&self.show_active_indicator, "visible"),
+                add_css_class: "pstate-active-indicator",
                 #[watch]
-                set_opacity: if self.active.value() { 1.0 } else { 0.0 },
+                set_class_active: ("pstate-inactive", !self.active.value()),
             },
 
             append = &gtk::CheckButton {
@@ -53,6 +51,7 @@ impl relm4::factory::FactoryComponent for PowerStateRow {
             },
 
             append = &gtk::Label {
+                add_css_class: "pstate-label",
                 add_css_class: css::MONOSPACE,
                 #[watch]
                 set_class_active: (css::DIM_LABEL, !self.active.value()),
@@ -81,7 +80,6 @@ impl relm4::factory::FactoryComponent for PowerStateRow {
             power_state: opts.power_state,
             value_suffix: opts.value_suffix,
             configurable: opts.configurable,
-            show_active_indicator: opts.show_active_indicator,
         }
     }
 
