@@ -140,6 +140,15 @@ performance-level-low-description = Always use the lowest clockspeeds for GPU an
 performance-level-manual-description = Manual performance control.
 
 performance-level = Performance Level
+nvidia-powermizer-mode = PowerMizer Mode
+nvidia-powermizer-adaptive = Adaptive
+nvidia-powermizer-prefer-maximum-performance = Prefer Maximum Performance
+nvidia-powermizer-auto = Auto
+nvidia-powermizer-prefer-consistent-performance = Prefer Consistent Performance
+nvidia-powermizer-adaptive-description = Adjust clocks based on GPU utilization.
+nvidia-powermizer-prefer-maximum-performance-description = Favor higher clocks where power and thermal limits allow.
+nvidia-powermizer-auto-description = Let the driver choose the policy.
+nvidia-powermizer-prefer-consistent-performance-description = Favor consistent base clocks.
 power-profile-mode = Power Profile Mode:
 manual-level-needed = Performance level has to be set to "manual" to use power states and modes
 

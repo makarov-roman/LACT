@@ -1,5 +1,6 @@
 mod driver;
 pub mod nvapi;
+mod powermizer;
 
 use super::{CommonControllerInfo, FanControlHandle, GpuController};
 use crate::{
@@ -37,6 +38,7 @@ use nvml_wrapper::{
     enums::device::{GpuLockedClocksSetting, UsedGpuMemory},
     error::NvmlError,
 };
+use powermizer::PowerMizerNvml;
 use std::{
     cell::{Cell, RefCell},
     cmp,
@@ -63,6 +65,7 @@ pub struct NvidiaGpuController {
 
     nvapi: Option<(&'static NvApi, NvPhysicalGpuHandle)>,
     driver_handle: Option<DriverHandle>,
+    power_mizer: Option<PowerMizerNvml>,
     nvapi_thermals_mask: Option<i32>,
 
     last_util_timestamp: Cell<Option<u64>>,
@@ -133,11 +136,16 @@ impl NvidiaGpuController {
             .temperature_threshold(TemperatureThreshold::AcousticCurr)
             .ok();
 
+        let power_mizer = PowerMizerNvml::new()
+            .inspect_err(|err| warn!("could not initialize PowerMizer NVML wrapper: {err:#}"))
+            .ok();
+
         Ok(Self {
             nvml,
             nvapi: nvapi.zip(nvapi_handle),
             common,
             driver_handle,
+            power_mizer,
             nvapi_thermals_mask,
             initial_target_temp: target_temp,
             last_util_timestamp: Cell::new(None),
@@ -758,6 +766,13 @@ impl GpuController for NvidiaGpuController {
 
         let fan_range = device.min_max_fan_speed().ok();
 
+        let nvidia_power_mizer = self.power_mizer.as_ref().and_then(|power_mizer| {
+            power_mizer
+                .get_info(&self.common.pci_slot_name)
+                .inspect_err(|err| warn!("could not get PowerMizer info: {err:#}"))
+                .ok()
+        });
+
         DeviceStats {
             temps,
             fan: FanStats {
@@ -838,6 +853,7 @@ impl GpuController for NvidiaGpuController {
             core_power_state: active_pstate,
             memory_power_state: active_pstate,
             pcie_power_state: None,
+            nvidia_power_mizer,
         }
     }
 
@@ -980,6 +996,17 @@ impl GpuController for NvidiaGpuController {
                         .set_power_management_limit(default_cap)
                         .context("Could not reset power cap")?;
                 }
+            }
+
+            if let Some(mode) = config.nvidia_power_mizer_mode {
+                let power_mizer = self
+                    .power_mizer
+                    .as_ref()
+                    .context("PowerMizer NVML wrapper is not available")?;
+                debug!("setting Nvidia PowerMizer mode to {mode:?}");
+                power_mizer
+                    .set_mode(&self.common.pci_slot_name, mode)
+                    .context("Could not set Nvidia PowerMizer mode")?;
             }
 
             self.reset_clocks()?;

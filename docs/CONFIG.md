@@ -117,6 +117,9 @@ gpus:
       zero_rpm_threshold: 50
     # Power limit in watts.
     power_cap: 320.0
+    # Nvidia PowerMizer policy.
+    # Can be `adaptive`, `prefer_maximum_performance`, `auto` or `prefer_consistent_performance`.
+    nvidia_power_mizer_mode: adaptive
     # Performance level option for AMD GPUs.
     # Can be `auto`, `low`, `high` or `manual`.
     performance_level: auto

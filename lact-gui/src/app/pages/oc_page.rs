@@ -124,6 +124,11 @@ impl relm4::Component for OcPage {
                     self.vf_curve_editor
                         .emit(VfCurveEditorMsg::Stats(stats.clone()));
 
+                    self.performance_frame
+                        .emit(PerformanceFrameMsg::NvidiaPowerMizer(
+                            stats.nvidia_power_mizer.clone(),
+                        ));
+
                     if initial {
                         self.power_cap_section
                             .emit(PowerCapMsg::Update(update.clone()));
@@ -203,6 +208,10 @@ impl relm4::Component for OcPage {
 impl OcPage {
     pub fn get_performance_level(&self) -> Option<PerformanceLevel> {
         self.performance_frame.model().performance_level()
+    }
+
+    pub fn get_nvidia_power_mizer_mode(&self) -> Option<lact_schema::NvidiaPowerMizerMode> {
+        self.performance_frame.model().nvidia_power_mizer_mode()
     }
 
     pub fn get_power_profile_mode(&self) -> Option<u16> {

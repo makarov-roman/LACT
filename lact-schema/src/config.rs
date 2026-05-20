@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
 use crate::{
-    FanControlMode, FanCurveMap, PmfwOptions, ProfileRule, default_fan_curve,
+    FanControlMode, FanCurveMap, NvidiaPowerMizerMode, PmfwOptions, ProfileRule, default_fan_curve,
     request::{ClockspeedType, SetClocksCommand},
 };
 
@@ -41,6 +41,7 @@ pub struct GpuConfig {
     pub pmfw_options: PmfwOptions,
     pub power_cap: Option<f64>,
     pub performance_level: Option<PerformanceLevel>,
+    pub nvidia_power_mizer_mode: Option<NvidiaPowerMizerMode>,
     #[serde(default, flatten)]
     pub clocks_configuration: ClocksConfiguration,
     pub power_profile_mode_index: Option<u16>,

@@ -1033,6 +1033,7 @@ impl GpuController for AmdGpuController {
                 .inspect_err(|err| debug!("could not get active PCIe power state: {err:#}"))
                 .ok()
                 .and_then(|levels| levels.active),
+            nvidia_power_mizer: None,
             throttle_info,
         }
     }

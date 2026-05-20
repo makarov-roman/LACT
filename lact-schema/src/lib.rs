@@ -552,7 +552,45 @@ pub struct DeviceStats {
     pub core_power_state: Option<usize>,
     pub memory_power_state: Option<usize>,
     pub pcie_power_state: Option<usize>,
+    pub nvidia_power_mizer: Option<NvidiaPowerMizerInfo>,
     pub throttle_info: Option<BTreeMap<String, Vec<String>>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NvidiaPowerMizerMode {
+    Adaptive,
+    PreferMaximumPerformance,
+    Auto,
+    PreferConsistentPerformance,
+}
+
+impl NvidiaPowerMizerMode {
+    pub fn as_raw(self) -> u32 {
+        match self {
+            Self::Adaptive => 0,
+            Self::PreferMaximumPerformance => 1,
+            Self::Auto => 2,
+            Self::PreferConsistentPerformance => 3,
+        }
+    }
+
+    pub fn from_raw(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(Self::Adaptive),
+            1 => Some(Self::PreferMaximumPerformance),
+            2 => Some(Self::Auto),
+            3 => Some(Self::PreferConsistentPerformance),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct NvidiaPowerMizerInfo {
+    pub current: Option<NvidiaPowerMizerMode>,
+    pub default: Option<NvidiaPowerMizerMode>,
+    pub supported: Vec<NvidiaPowerMizerMode>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

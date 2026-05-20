@@ -6,14 +6,10 @@ use crate::{
     app::{msg::AppMsg, page_section::PageSection},
 };
 use amdgpu_sysfs::gpu_handle::{PerformanceLevel, power_profile_mode::PowerProfileModesTable};
-use gtk::{
-    StringObject,
-    gio::prelude::ListModelExt,
-    glib::object::Cast,
-    prelude::{BoxExt, ListBoxRowExt, OrientableExt, WidgetExt},
-};
+use gtk::{StringObject, gio::prelude::ListModelExt, glib::object::Cast, prelude::*};
 use heuristics_list::PowerProfileHeuristicsList;
 use i18n_embed_fl::fl;
+use lact_schema::{NvidiaPowerMizerInfo, NvidiaPowerMizerMode};
 use relm4::{Component, ComponentController, ComponentParts, ComponentSender, RelmWidgetExt};
 
 const PERFORMANCE_LEVELS: [PerformanceLevel; 4] = [
@@ -25,6 +21,11 @@ const PERFORMANCE_LEVELS: [PerformanceLevel; 4] = [
 
 pub struct PerformanceFrame {
     performance_level: Option<PerformanceLevel>,
+    nvidia_power_mizer: Option<NvidiaPowerMizerInfo>,
+    nvidia_power_mizer_modes: Vec<NvidiaPowerMizerMode>,
+    nvidia_power_mizer_mode_names: gtk::StringList,
+    selected_nvidia_power_mizer_mode: Option<NvidiaPowerMizerMode>,
+    nvidia_power_mizer_dirty: bool,
     power_profile_modes_table: Option<PowerProfileModesTable>,
     power_profile_modes: gtk::StringList,
     heuristics_components: Vec<relm4::Controller<PowerProfileHeuristicsList>>,
@@ -33,6 +34,8 @@ pub struct PerformanceFrame {
 #[derive(Debug)]
 pub enum PerformanceFrameMsg {
     PerformanceLevel(Option<PerformanceLevel>),
+    NvidiaPowerMizer(Option<NvidiaPowerMizerInfo>),
+    NvidiaPowerMizerSelected(u32),
     PowerProfileModes(Option<PowerProfileModesTable>),
     PowerProfileSelected(u16),
 }
@@ -47,11 +50,13 @@ impl relm4::Component for PerformanceFrame {
     view! {
         PageSection::new("Performance") {
             #[watch]
-            set_visible: model.performance_level.is_some(),
+            set_visible: model.performance_level.is_some() || model.nvidia_power_mizer.is_some(),
 
             append_child = &gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
                 set_spacing: 10,
+                #[watch]
+                set_visible: model.performance_level.is_some(),
 
                 gtk::Label {
                     set_label: &fl!(I18N, "performance-level"),
@@ -89,6 +94,45 @@ impl relm4::Component for PerformanceFrame {
             append_child = &gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
                 set_spacing: 10,
+                #[watch]
+                set_visible: model.nvidia_power_mizer.is_some(),
+
+                gtk::Label {
+                    set_label: &fl!(I18N, "nvidia-powermizer-mode"),
+                },
+
+                gtk::Label {
+                    #[watch]
+                    set_label: &model.selected_nvidia_power_mizer_mode
+                        .map(nvidia_power_mizer_description)
+                        .unwrap_or_default(),
+                    set_hexpand: true,
+                    set_halign: gtk::Align::End,
+                },
+
+                gtk::DropDown {
+                    set_model: Some(&model.nvidia_power_mizer_mode_names),
+                    #[watch]
+                    #[block_signal(nvidia_powermizer_handler)]
+                    set_selected: model
+                        .selected_nvidia_power_mizer_mode
+                        .and_then(|selected| model.nvidia_power_mizer_modes.iter().position(|mode| *mode == selected))
+                        .unwrap_or(0) as u32,
+                    #[watch]
+                    set_sensitive: !model.nvidia_power_mizer_modes.is_empty(),
+
+                    connect_selected_notify[sender] => move |dropdown| {
+                        sender.input(PerformanceFrameMsg::NvidiaPowerMizerSelected(dropdown.selected()));
+                        APP_BROKER.send(AppMsg::SettingsChanged);
+                    } @ nvidia_powermizer_handler,
+                },
+            },
+
+            append_child = &gtk::Box {
+                set_orientation: gtk::Orientation::Horizontal,
+                set_spacing: 10,
+                #[watch]
+                set_visible: model.power_profile_modes_table.is_some(),
 
                 gtk::Label {
                     set_label: &fl!(I18N, "power-profile-mode"),
@@ -168,6 +212,11 @@ impl relm4::Component for PerformanceFrame {
 
         let model = Self {
             performance_level: None,
+            nvidia_power_mizer: None,
+            nvidia_power_mizer_modes: vec![],
+            nvidia_power_mizer_mode_names: gtk::StringList::new(&[]),
+            selected_nvidia_power_mizer_mode: None,
+            nvidia_power_mizer_dirty: false,
             power_profile_modes_table: None,
             power_profile_modes: gtk::StringList::new(&[]),
             heuristics_components: vec![],
@@ -188,6 +237,50 @@ impl relm4::Component for PerformanceFrame {
         match msg {
             PerformanceFrameMsg::PerformanceLevel(level) => {
                 self.performance_level = level;
+            }
+            PerformanceFrameMsg::NvidiaPowerMizer(info) => {
+                while self.nvidia_power_mizer_mode_names.n_items() != 0 {
+                    self.nvidia_power_mizer_mode_names.remove(0);
+                }
+
+                self.nvidia_power_mizer_modes.clear();
+
+                if let Some(info) = &info {
+                    for mode in &info.supported {
+                        self.nvidia_power_mizer_modes.push(*mode);
+                        self.nvidia_power_mizer_mode_names
+                            .append(&nvidia_power_mizer_friendly_name(*mode));
+                    }
+
+                    if self.nvidia_power_mizer_dirty {
+                        if self.selected_nvidia_power_mizer_mode == info.current {
+                            self.nvidia_power_mizer_dirty = false;
+                        } else if self
+                            .selected_nvidia_power_mizer_mode
+                            .is_some_and(|mode| !self.nvidia_power_mizer_modes.contains(&mode))
+                        {
+                            self.selected_nvidia_power_mizer_mode = info.current;
+                            self.nvidia_power_mizer_dirty = false;
+                        }
+                    } else {
+                        self.selected_nvidia_power_mizer_mode = info.current;
+                    }
+                } else {
+                    self.selected_nvidia_power_mizer_mode = None;
+                    self.nvidia_power_mizer_dirty = false;
+                }
+
+                self.nvidia_power_mizer = info;
+            }
+            PerformanceFrameMsg::NvidiaPowerMizerSelected(idx) => {
+                if let Some(mode) = self.nvidia_power_mizer_modes.get(idx as usize) {
+                    self.selected_nvidia_power_mizer_mode = Some(*mode);
+                    self.nvidia_power_mizer_dirty = self
+                        .nvidia_power_mizer
+                        .as_ref()
+                        .and_then(|info| info.current)
+                        != Some(*mode);
+                }
             }
             PerformanceFrameMsg::PowerProfileModes(table) => {
                 while self.power_profile_modes.n_items() != 0 {
@@ -261,6 +354,14 @@ impl PerformanceFrame {
         self.performance_level
     }
 
+    pub fn nvidia_power_mizer_mode(&self) -> Option<NvidiaPowerMizerMode> {
+        if self.nvidia_power_mizer.is_some() {
+            self.selected_nvidia_power_mizer_mode
+        } else {
+            None
+        }
+    }
+
     pub fn power_profile_mode(&self) -> Option<u16> {
         if self.performance_level == Some(PerformanceLevel::Manual) {
             self.power_profile_modes_table
@@ -293,5 +394,37 @@ fn level_friendly_name(level: PerformanceLevel) -> String {
         PerformanceLevel::Low => fl!(I18N, "performance-level-low"),
         PerformanceLevel::High => fl!(I18N, "performance-level-high"),
         PerformanceLevel::Manual => fl!(I18N, "performance-level-manual"),
+    }
+}
+
+fn nvidia_power_mizer_friendly_name(mode: NvidiaPowerMizerMode) -> String {
+    match mode {
+        NvidiaPowerMizerMode::Adaptive => fl!(I18N, "nvidia-powermizer-adaptive"),
+        NvidiaPowerMizerMode::PreferMaximumPerformance => {
+            fl!(I18N, "nvidia-powermizer-prefer-maximum-performance")
+        }
+        NvidiaPowerMizerMode::Auto => fl!(I18N, "nvidia-powermizer-auto"),
+        NvidiaPowerMizerMode::PreferConsistentPerformance => {
+            fl!(I18N, "nvidia-powermizer-prefer-consistent-performance")
+        }
+    }
+}
+
+fn nvidia_power_mizer_description(mode: NvidiaPowerMizerMode) -> String {
+    match mode {
+        NvidiaPowerMizerMode::Adaptive => fl!(I18N, "nvidia-powermizer-adaptive-description"),
+        NvidiaPowerMizerMode::PreferMaximumPerformance => {
+            fl!(
+                I18N,
+                "nvidia-powermizer-prefer-maximum-performance-description"
+            )
+        }
+        NvidiaPowerMizerMode::Auto => fl!(I18N, "nvidia-powermizer-auto-description"),
+        NvidiaPowerMizerMode::PreferConsistentPerformance => {
+            fl!(
+                I18N,
+                "nvidia-powermizer-prefer-consistent-performance-description"
+            )
+        }
     }
 }
