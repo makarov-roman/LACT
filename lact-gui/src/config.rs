@@ -1,4 +1,4 @@
-use crate::{StatType, app::utils::styles::AppTheme};
+use crate::app::utils::{stat_view::StatType, styles::AppTheme};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_with::skip_serializing_none;
 use std::{collections::HashMap, env, fs, path::PathBuf};
