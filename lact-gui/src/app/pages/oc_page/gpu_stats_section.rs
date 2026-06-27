@@ -54,21 +54,21 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append = &InfoRow {
                         #[watch]
-                        set_name: StatType::DeviceName.gui_label(&context),
+                        set_name: StatType::DeviceName.label(),
                         #[watch]
                         set_value: StatType::DeviceName.gui_value(&context),
                     },
 
                     append = &InfoRow {
                         #[watch]
-                        set_name: StatType::Throttling.gui_label(&context),
+                        set_name: StatType::Throttling.label(),
                         #[watch]
                         set_value: StatType::Throttling.gui_value(&context),
                     },
 
                     append_child = &InfoRow {
                         #[watch]
-                        set_name: StatType::GpuTargetClock.gui_label(&context),
+                        set_name: StatType::GpuTargetClock.label(),
                         #[watch]
                         set_value: StatType::GpuTargetClock.gui_value(&context),
                     } -> clockspeed_target_item: gtk::FlowBoxChild {
@@ -78,7 +78,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append_child = &InfoRow {
                         #[watch]
-                        set_name: StatType::GpuVoltage.gui_label(&context),
+                        set_name: StatType::GpuVoltage.label(),
                         #[watch]
                         set_value: StatType::GpuVoltage.gui_value(&context),
                     } -> gpu_voltage_item: gtk::FlowBoxChild {
@@ -89,7 +89,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append_child = &InfoRow {
                         #[watch]
-                        set_name: StatType::Temperatures.gui_label(&context),
+                        set_name: StatType::Temperatures.label(),
                         #[watch]
                         set_value: StatType::Temperatures.gui_value(&context),
                     } -> basic_temps_item: gtk::FlowBoxChild {
@@ -100,7 +100,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append_child = &InfoRow {
                         #[watch]
-                        set_name: StatType::Temperatures.gui_label(&context),
+                        set_name: StatType::Temperatures.label(),
                         #[watch]
                         set_value: StatType::Temperatures.gui_value(&context),
 
@@ -139,7 +139,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append_child = &InfoRowLevel {
                         #[watch]
-                        set_name: StatType::GpuClock.gui_label(&context),
+                        set_name: StatType::GpuClock.label(),
                         #[watch]
                         set_value: StatType::GpuClock.gui_value(&context),
                         #[watch]
@@ -151,7 +151,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append_child = &InfoRowLevel {
                         #[watch]
-                        set_name: StatType::VramClock.gui_label(&context),
+                        set_name: StatType::VramClock.label(),
                         #[watch]
                         set_value: StatType::VramClock.gui_value(&context),
                         #[watch]
@@ -163,7 +163,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append_child = &InfoRowLevel {
                         #[watch]
-                        set_name: StatType::GpuUsage.gui_label(&context),
+                        set_name: StatType::GpuUsage.label(),
                         #[watch]
                         set_value: StatType::GpuUsage.gui_value(&context),
                         #[watch]
@@ -175,7 +175,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append_child = &InfoRowLevel {
                         #[watch]
-                        set_name: StatType::VramUsage.gui_label(&context),
+                        set_name: StatType::VramUsage.label(),
                         #[watch]
                         set_value: StatType::VramUsage.gui_value(&context),
                         #[watch]
@@ -184,7 +184,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append_child = &InfoRowLevel {
                         #[watch]
-                        set_name: StatType::PowerUsage.gui_label(&context),
+                        set_name: StatType::PowerUsage.label(),
                         #[watch]
                         set_value: StatType::PowerUsage.gui_value(&context),
                         #[watch]
@@ -196,7 +196,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
 
                     append_child = &InfoRowLevel {
                         #[watch]
-                        set_name: StatType::FanSpeed.gui_label(&context),
+                        set_name: StatType::FanSpeed.label(),
                         #[watch]
                         set_value: StatType::FanSpeed.gui_value(&context),
                         #[watch]

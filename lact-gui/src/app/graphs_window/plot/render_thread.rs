@@ -289,10 +289,7 @@ impl RenderRequest {
 
             let stat_suffix = stat_type.unit_label();
 
-            let mut stat_label = format!(
-                "{}: {current_value:.1}{stat_suffix}",
-                stat_type.graph_label(),
-            );
+            let mut stat_label = format!("{}: {current_value:.1}{stat_suffix}", stat_type.label(),);
             if self.print_extra_info {
                 if stat_type.show_peak() {
                     write!(stat_label, ", Peak {max_value:.1}{stat_suffix}").unwrap();
