@@ -42,23 +42,6 @@ impl StatConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct StatMetadata {
-    pub label: String,
-    pub unit_label: &'static str,
-    pub show_peak: bool,
-}
-
-impl From<&StatConfig> for StatMetadata {
-    fn from(config: &StatConfig) -> Self {
-        Self {
-            label: config.label.clone(),
-            unit_label: config.unit_label,
-            show_peak: config.show_peak,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StatContext<'a> {
     pub stats: &'a DeviceStats,
@@ -97,7 +80,7 @@ pub enum StatType {
 }
 
 pub(crate) fn build_stat_config_map(context: &StatContext<'_>) -> StatConfigMap {
-    let mut configs = fixed_stat_configs().clone();
+    let mut configs = static_stat_configs().clone();
 
     for name in context.stats.temps.keys() {
         let stat_type = StatType::Temperature(name.clone());
@@ -197,7 +180,7 @@ pub(crate) fn build_stat_config_map(context: &StatContext<'_>) -> StatConfigMap 
     configs
 }
 
-pub(crate) fn fixed_stat_configs() -> &'static StatConfigMap {
+pub(crate) fn static_stat_configs() -> &'static StatConfigMap {
     static CONFIGS: LazyLock<StatConfigMap> = LazyLock::new(|| {
         HashMap::from([
             (

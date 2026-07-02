@@ -7,7 +7,7 @@ use crate::app::{
     utils::{
         ext::FlowBoxExt,
         formatting,
-        stat_view::{StatConfig, StatConfigMap, StatContext, StatType, fixed_stat_configs},
+        stat_view::{StatConfig, StatConfigMap, StatContext, StatType, static_stat_configs},
     },
 };
 use gtk::pango::AttrList;
@@ -229,7 +229,7 @@ impl relm4::SimpleComponent for GpuStatsSection {
             max_vram_clock: None,
             min_gpu_clock: None,
             min_vram_clock: None,
-            stat_configs: fixed_stat_configs().clone(),
+            stat_configs: static_stat_configs().clone(),
         };
         let context = model.stat_context();
         let secondary_temperatures = model.secondary_temperatures(&context);
