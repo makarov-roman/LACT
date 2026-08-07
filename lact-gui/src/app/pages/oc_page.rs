@@ -45,7 +45,10 @@ pub enum OcPageMsg {
         update: PageUpdate,
         initial: bool,
     },
-    ClocksTable(Option<ClocksTable>),
+    ClocksTable {
+        table: Option<ClocksTable>,
+        vf_curve_configured: bool,
+    },
     ProfileModesTable(Option<PowerProfileModesTable>),
     PowerStates {
         pstates: PowerStates,
@@ -159,13 +162,18 @@ impl relm4::Component for OcPage {
                         .emit(ClocksFrameMsg::VramRatio(vram_clock_ratio));
                 }
             },
-            OcPageMsg::ClocksTable(table) => {
+            OcPageMsg::ClocksTable {
+                table,
+                vf_curve_configured,
+            } => {
                 let table = table.map(Arc::new);
 
                 self.clocks_frame
                     .emit(ClocksFrameMsg::Clocks(table.clone()));
-                self.vf_curve_editor
-                    .emit(VfCurveEditorMsg::Clocks(table.clone()));
+                self.vf_curve_editor.emit(VfCurveEditorMsg::Clocks {
+                    table: table.clone(),
+                    configured: vf_curve_configured,
+                });
             }
             OcPageMsg::ProfileModesTable(modes_table) => {
                 self.performance_frame

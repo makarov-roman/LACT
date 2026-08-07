@@ -63,7 +63,10 @@ pub struct VfCurveEditor {
 #[derive(Debug)]
 pub enum VfCurveEditorMsg {
     Show,
-    Clocks(Option<Arc<ClocksTable>>),
+    Clocks {
+        table: Option<Arc<ClocksTable>>,
+        configured: bool,
+    },
     Stats(Arc<DeviceStats>),
     CursorUpdate {
         x: f64,
@@ -323,13 +326,14 @@ impl relm4::Component for VfCurveEditor {
             VfCurveEditorMsg::Show => {
                 root.present();
             }
-            VfCurveEditorMsg::Clocks(clocks_table) => {
+            VfCurveEditorMsg::Clocks { table, configured } => {
                 let mut points = self.points.borrow_mut();
                 points.clear();
                 self.locked_clocks_range.take();
                 self.freq_range.take();
+                self.allow_editing.set_value(configured);
 
-                if let Some(ClocksTable::Nvidia(nvidia_table)) = clocks_table.as_deref() {
+                if let Some(ClocksTable::Nvidia(nvidia_table)) = table.as_deref() {
                     points.extend_from_slice(&nvidia_table.gpu_vf_curve);
                     self.locked_clocks_range.set(nvidia_table.gpu_locked_clocks);
                     let offset_range = nvidia_table
