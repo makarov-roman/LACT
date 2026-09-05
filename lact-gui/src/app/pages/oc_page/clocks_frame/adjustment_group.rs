@@ -1,7 +1,17 @@
-use super::adjustment_row::{ClockAdjustmentRow, ClockAdjustmentRowMsg, ClocksData};
+use super::{ClocksData, clock_title};
+use crate::{
+    APP_BROKER, I18N,
+    app::{
+        components::adjustment_row::{AdjustmentRow, AdjustmentRowInit, AdjustmentRowMsg},
+        msg::AppMsg,
+        utils::ext::RelmLaunchable,
+    },
+};
 use gtk::prelude::{BoxExt, OrientableExt, WidgetExt};
+use i18n_embed_fl::fl;
+use indexmap::IndexMap;
 use lact_schema::request::ClockspeedType;
-use relm4::{css, factory::FactoryHashMap, prelude::FactoryComponent};
+use relm4::{ComponentController, css, prelude::FactoryComponent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClockCategory {
@@ -58,7 +68,13 @@ impl ClockCategory {
 }
 
 pub struct AdjustmentGroup {
-    adjustments: FactoryHashMap<ClockspeedType, ClockAdjustmentRow>,
+    adjustments: IndexMap<ClockspeedType, ClockEntry>,
+    adjustments_widget: gtk::Box,
+}
+
+struct ClockEntry {
+    row: relm4::Controller<AdjustmentRow>,
+    is_secondary: bool,
 }
 
 impl AdjustmentGroup {
@@ -71,25 +87,46 @@ impl AdjustmentGroup {
     }
 
     pub fn set_clock(&mut self, clock_type: ClockspeedType, data: ClocksData) {
-        self.adjustments.insert(clock_type, data);
+        let row = AdjustmentRow::launch(AdjustmentRowInit {
+            title: data.custom_title.unwrap_or_else(|| clock_title(clock_type)),
+            info_text: if clock_type == ClockspeedType::VoltageBoost {
+                fl!(I18N, "gpu-voltage-boost-tooltip")
+            } else {
+                String::new()
+            },
+            value: f64::from(data.current),
+            lower: f64::from(data.min),
+            upper: f64::from(data.max),
+            step_increment: f64::from(data.step),
+            ..Default::default()
+        })
+        .connect_receiver(|_, ()| APP_BROKER.send(AppMsg::SettingsChanged));
+
+        if let Some(previous) = self.adjustments.get(&clock_type) {
+            self.adjustments_widget.remove(previous.row.widget());
+        }
+        self.adjustments_widget.append(row.widget());
+        self.adjustments.insert(
+            clock_type,
+            ClockEntry {
+                row,
+                is_secondary: data.is_secondary,
+            },
+        );
     }
 
     pub fn add_size_group(&self, label_group: gtk::SizeGroup, input_group: gtk::SizeGroup) {
-        for clock_type in self.adjustments.keys() {
-            self.adjustments.send(
-                clock_type,
-                ClockAdjustmentRowMsg::AddSizeGroup {
-                    label_group: label_group.clone(),
-                    input_group: input_group.clone(),
-                },
-            );
+        for entry in self.adjustments.values() {
+            entry.row.emit(AdjustmentRowMsg::AddSizeGroup {
+                label_group: label_group.clone(),
+                input_group: input_group.clone(),
+            });
         }
     }
 
     pub fn set_value_ratio(&self, ratio: f64) {
-        for clock_type in self.adjustments.keys() {
-            self.adjustments
-                .send(clock_type, ClockAdjustmentRowMsg::ValueRatio(ratio));
+        for entry in self.adjustments.values() {
+            entry.row.emit(AdjustmentRowMsg::ValueRatio(ratio));
         }
     }
 
@@ -103,7 +140,7 @@ impl AdjustmentGroup {
     ) {
         let mut any_visible = false;
 
-        for (key, row) in self.adjustments.iter() {
+        for (key, entry) in self.adjustments.iter() {
             let show_current = match key {
                 ClockspeedType::MaxCoreClock | ClockspeedType::MinCoreClock
                     if show_nvidia_options =>
@@ -118,31 +155,38 @@ impl AdjustmentGroup {
                 ClockspeedType::GpuClockOffset(_) if show_nvidia_options && vf_curve_editing => {
                     false
                 }
-                _ => !row.is_secondary || show_secondary,
+                _ => !entry.is_secondary || show_secondary,
             };
 
             any_visible |= show_current;
 
-            self.adjustments
-                .send(key, ClockAdjustmentRowMsg::SetVisible(show_current));
+            entry.row.emit(AdjustmentRowMsg::SetVisible(show_current));
         }
 
         // removes empty card
-        self.adjustments.widget().set_visible(any_visible);
+        self.adjustments_widget.set_visible(any_visible);
     }
 
     pub fn get_commands(&self) -> Vec<(ClockspeedType, Option<i32>)> {
         self.adjustments
             .iter()
-            .map(|(clock_type, row)| (*clock_type, row.get_configured_value()))
+            .map(|(clock_type, entry)| {
+                (
+                    *clock_type,
+                    entry
+                        .row
+                        .model()
+                        .get_changed_value()
+                        .map(|value| value as i32),
+                )
+            })
             .collect()
     }
 
     pub fn reset_gpu_clock_offsets(&self) {
-        for clock_type in self.adjustments.keys() {
+        for (clock_type, entry) in &self.adjustments {
             if matches!(clock_type, ClockspeedType::GpuClockOffset(_)) {
-                self.adjustments
-                    .send(clock_type, ClockAdjustmentRowMsg::SetValue(0));
+                entry.row.emit(AdjustmentRowMsg::SetValue(0.0));
             }
         }
     }
@@ -150,7 +194,7 @@ impl AdjustmentGroup {
     pub fn get_raw_value(&self, clock_type: ClockspeedType) -> i32 {
         self.adjustments
             .get(&clock_type)
-            .map(|row| row.get_raw_value())
+            .map(|entry| entry.row.model().get_value() as i32)
             .unwrap_or(0)
     }
 }
@@ -165,7 +209,7 @@ impl FactoryComponent for AdjustmentGroup {
     type Index = ClockCategory;
 
     view! {
-        self.adjustments.widget().clone() -> gtk::Box {
+        self.adjustments_widget.clone() -> gtk::Box {
             set_orientation: gtk::Orientation::Vertical,
             set_spacing: 5,
             set_valign: gtk::Align::Start,
@@ -175,7 +219,8 @@ impl FactoryComponent for AdjustmentGroup {
 
     fn init_model(_: Self::Init, _: &Self::Index, _: relm4::FactorySender<Self>) -> Self {
         Self {
-            adjustments: FactoryHashMap::builder().launch_default().detach(),
+            adjustments: IndexMap::new(),
+            adjustments_widget: gtk::Box::default(),
         }
     }
 }
