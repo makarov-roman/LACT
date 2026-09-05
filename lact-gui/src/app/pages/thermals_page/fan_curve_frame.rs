@@ -7,10 +7,7 @@ use crate::{
     },
 };
 use adw::prelude::*;
-use gtk::{
-    gdk,
-    glib::{self, SignalHandlerId},
-};
+use gtk::{gdk, glib};
 use i18n_embed_fl::fl;
 use indexmap::IndexMap;
 use lact_schema::{FanCurveMap, TemperatureEntry, default_fan_curve};
@@ -58,8 +55,6 @@ pub(super) struct FanCurveFrame {
     temperature_range: Rc<RefCell<RangeInclusive<f32>>>,
     temp_keys: gtk::StringList,
     current_temp_key: U32Binding,
-
-    temp_key_change_signal: Rc<SignalHandlerId>,
 
     is_dragging: Rc<AtomicBool>,
     /// Index of the point currently being dragged
@@ -206,6 +201,13 @@ impl relm4::Component for FanCurveFrame {
                     || model.adjustments.borrow().get(&CurveSetting::AutoThreshold).is_some(),
             },
         },
+
+        #[local_ref]
+        current_temp_key -> U32Binding {
+            connect_value_notify => move |_| {
+                APP_BROKER.send(AppMsg::SettingsChanged);
+            } @ temp_key_change_signal,
+        },
     }
 
     fn post_view() {
@@ -221,9 +223,6 @@ impl relm4::Component for FanCurveFrame {
     ) -> ComponentParts<Self> {
         let temp_keys = gtk::StringList::default();
         let current_temp_key = U32Binding::new(0u32);
-        let temp_key_change_signal = Rc::new(current_temp_key.connect_value_notify(|_| {
-            APP_BROKER.send(AppMsg::SettingsChanged);
-        }));
 
         let model = Self {
             adjustments: Rc::new(RefCell::new(
@@ -239,7 +238,6 @@ impl relm4::Component for FanCurveFrame {
             temperature_range: Rc::new(RefCell::new(DEFAULT_TEMP_RANGE)),
             temp_keys,
             current_temp_key,
-            temp_key_change_signal,
             data: Rc::default(),
             drag_coord: Rc::default(),
             drag_point: Rc::default(),
@@ -247,6 +245,7 @@ impl relm4::Component for FanCurveFrame {
             hover_point: Rc::default(),
         };
 
+        let current_temp_key = &model.current_temp_key;
         let widgets = view_output!();
 
         ComponentParts { model, widgets }
@@ -270,7 +269,7 @@ impl relm4::Component for FanCurveFrame {
                     .store(msg.hw_based, Ordering::SeqCst);
 
                 self.current_temp_key
-                    .block_signal(&self.temp_key_change_signal);
+                    .block_signal(&widgets.temp_key_change_signal);
 
                 let mut temp_keys = msg
                     .current_temperatures
@@ -298,7 +297,7 @@ impl relm4::Component for FanCurveFrame {
                 }
 
                 self.current_temp_key
-                    .unblock_signal(&self.temp_key_change_signal);
+                    .unblock_signal(&widgets.temp_key_change_signal);
                 self.adjustments.borrow_mut().clear();
                 for (setting, init) in [
                     (
