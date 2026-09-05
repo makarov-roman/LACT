@@ -5,3 +5,7 @@
 .clocks-frame-group .card {
     padding: 10px;
 }
+
+.clocks-frame-group .adjustment-row > scale {
+    min-width: 100px;
+}

@@ -1,7 +1,7 @@
 use crate::{
     APP_BROKER, I18N,
     app::{
-        components::{oc_adjustment::OcAdjustment, page_section::PageSection},
+        components::{adjustment_value::AdjustmentValue, page_section::PageSection},
         msg::AppMsg,
         pages::PageUpdate,
     },
@@ -18,7 +18,7 @@ use std::fmt::Write;
 #[derive(Default)]
 pub struct PowerCapSection {
     power: PowerStats,
-    adjustment: OcAdjustment,
+    adjustment: AdjustmentValue,
     value_text: String,
 }
 
@@ -67,7 +67,7 @@ impl relm4::Component for PowerCapSection {
         },
 
         #[local_ref]
-        adjustment -> OcAdjustment {
+        adjustment -> AdjustmentValue {
             connect_value_notify => move |_| {
                 APP_BROKER.send(AppMsg::SettingsChanged);
             } @ value_notify,
