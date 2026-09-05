@@ -6,6 +6,7 @@ use std::marker::PhantomData;
 
 pub struct AdjustmentRow<Key> {
     title: String,
+    title_tooltip: String,
     info_text: String,
     _key: PhantomData<Key>,
     adjustment: AdjustmentValue,
@@ -14,6 +15,7 @@ pub struct AdjustmentRow<Key> {
 
 pub struct AdjustmentRowInit {
     pub title: String,
+    pub title_tooltip: String,
     pub info_text: String,
     pub value: f64,
     pub lower: f64,
@@ -26,6 +28,7 @@ impl Default for AdjustmentRowInit {
     fn default() -> Self {
         Self {
             title: String::new(),
+            title_tooltip: String::new(),
             info_text: String::new(),
             value: 0.0,
             lower: 0.0,
@@ -42,6 +45,8 @@ pub enum AdjustmentRowMsg {
     ValueRatio(f64),
     /// Set a value as an edit, for example when the user presses Reset.
     SetValue(f64),
+    /// Mirror an edit from another row without sending another edit notification.
+    SyncValue(f64),
     SetVisible(bool),
     AddSizeGroup {
         label_group: gtk::SizeGroup,
@@ -64,6 +69,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
         #[name = "root_box"]
         gtk::Box {
             set_orientation: gtk::Orientation::Horizontal,
+            add_css_class: "adjustment-row",
 
             #[name = "title_box"]
             gtk::Box {
@@ -73,6 +79,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
                 gtk::Label {
                     set_xalign: 0.0,
                     set_markup: &self.title,
+                    set_tooltip_text: (!self.title_tooltip.is_empty()).then_some(self.title_tooltip.as_str()),
                 },
 
                 #[name = "info_button"]
@@ -129,6 +136,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
     fn init_model(init: Self::Init, _index: &Self::Index, _sender: FactorySender<Self>) -> Self {
         Self {
             title: init.title,
+            title_tooltip: init.title_tooltip,
             info_text: init.info_text,
             _key: PhantomData,
             adjustment: AdjustmentValue::new(
@@ -183,6 +191,15 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
             }
             AdjustmentRowMsg::SetValue(value) => {
                 self.adjustment.set_value(value * self.value_ratio);
+            }
+            AdjustmentRowMsg::SyncValue(value) => {
+                self.adjustment.block_signal(&widgets.value_change_signal);
+                widgets.spinbutton.block_signal(&widgets.text_change_signal);
+                self.adjustment.set_value(value * self.value_ratio);
+                widgets
+                    .spinbutton
+                    .unblock_signal(&widgets.text_change_signal);
+                self.adjustment.unblock_signal(&widgets.value_change_signal);
             }
             AdjustmentRowMsg::SetVisible(visible) => widgets.root_box.set_visible(visible),
             AdjustmentRowMsg::AddSizeGroup {
