@@ -180,7 +180,7 @@ nvidia-oc-description =
     It is possible to achieve a pseudo-undervolt by combining the locked clocks option with a positive clockspeed offset.
     This will force the GPU to run at a voltage that's constrained by the locked clocks, while achieving a higher clockspeed due to the offset.
     This can cause system instability if pushed too high.
-oc-warning-button = Use at your own risk
+oc-warning-button = What are there risks?
 oc-warning-description =
     Aggressive overclocking can cause visual artifacts, crashes, or freezes
 
