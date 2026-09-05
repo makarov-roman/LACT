@@ -19,8 +19,7 @@ use adw::prelude::*;
 use amdgpu_sysfs::gpu_handle::fan_control::FanInfo;
 use anyhow::anyhow;
 use fan_curve_frame::{
-    CurveSetupMsg, DEFAULT_SPEED_RANGE, DEFAULT_TEMP_RANGE, FanCurveFrame, FanCurveFrameInit,
-    FanCurveFrameMsg,
+    CurveSetupMsg, DEFAULT_SPEED_RANGE, DEFAULT_TEMP_RANGE, FanCurveFrame, FanCurveFrameMsg,
 };
 use gtk::glib::{self, SignalHandlerId};
 use i18n_embed_fl::fl;
@@ -30,16 +29,12 @@ use lact_schema::{
     default_fan_curve,
 };
 use relm4::{
-    ComponentController, ComponentParts, ComponentSender, RelmObjectExt, RelmWidgetExt,
-    binding::{Binding, BoolBinding, ConnectBinding, StringBinding},
+    ComponentController, ComponentParts, ComponentSender, RelmWidgetExt,
+    binding::{Binding, BoolBinding, ConnectBinding},
     factory::FactoryHashMap,
 };
 use std::collections::HashSet;
 use std::sync::Arc;
-
-const AUTO_PAGE: &str = "automatic";
-const CURVE_PAGE: &str = "curve";
-const STATIC_PAGE: &str = "static";
 
 pub struct ThermalsPage {
     stats_section: relm4::Controller<GpuStatsSection>,
@@ -47,10 +42,8 @@ pub struct ThermalsPage {
     nvidia_target_temperature: FactoryHashMap<(), AdjustmentRow<()>>,
     zero_rpm_temperature: FactoryHashMap<(), AdjustmentRow<()>>,
     static_speed: FactoryHashMap<(), AdjustmentRow<()>>,
-    // Keep the latest edit here while the other tab processes its sync message.
-    zero_rpm_temperature_edit: Option<u32>,
     fan_curve_frame: relm4::Controller<FanCurveFrame>,
-    selected_mode: StringBinding,
+    selected_mode: Option<FanControlMode>,
 
     custom_control_supported: bool,
     has_fan_speed: bool,
@@ -75,10 +68,8 @@ pub enum ThermalSetting {
 #[derive(Debug)]
 pub enum ThermalsPageMsg {
     Update { update: PageUpdate, initial: bool },
-    FanModeSelected,
+    FanModeSelected(Option<FanControlMode>),
     RestNvidiaOptions,
-    ZeroRpmTemperatureEdited,
-    ZeroRpmTemperatureChanged(f64),
 }
 
 #[relm4::component(pub)]
@@ -118,77 +109,111 @@ impl relm4::Component for ThermalsPage {
                 #[watch]
                 set_sensitive: model.custom_control_supported,
 
-                append_child = &gtk::StackSwitcher {
-                    set_stack: Some(&stack),
+                append_child = &gtk::Box {
+                    add_css_class: "linked",
+                    set_homogeneous: true,
+
+                    #[name = "automatic_mode"]
+                    gtk::ToggleButton {
+                        set_label: &fl!(I18N, "auto-page"),
+                        #[watch]
+                        #[block_signal(automatic_mode_signal)]
+                        set_active: model.selected_mode.is_none(),
+                        connect_toggled[sender] => move |button| {
+                            if button.is_active() {
+                                sender.input(ThermalsPageMsg::FanModeSelected(None));
+                            }
+                        } @ automatic_mode_signal,
+                    },
+
+                    gtk::ToggleButton {
+                        set_label: &fl!(I18N, "curve-page"),
+                        set_group: Some(&automatic_mode),
+                        #[watch]
+                        #[block_signal(curve_mode_signal)]
+                        set_active: model.selected_mode == Some(FanControlMode::Curve),
+                        connect_toggled[sender] => move |button| {
+                            if button.is_active() {
+                                sender.input(ThermalsPageMsg::FanModeSelected(Some(FanControlMode::Curve)));
+                            }
+                        } @ curve_mode_signal,
+                    },
+
+                    gtk::ToggleButton {
+                        set_label: &fl!(I18N, "static-page"),
+                        set_group: Some(&automatic_mode),
+                        #[watch]
+                        #[block_signal(static_mode_signal)]
+                        set_active: model.selected_mode == Some(FanControlMode::Static),
+                        connect_toggled[sender] => move |button| {
+                            if button.is_active() {
+                                sender.input(ThermalsPageMsg::FanModeSelected(Some(FanControlMode::Static)));
+                            }
+                        } @ static_mode_signal,
+                    },
                 },
 
-                #[name = "stack"]
-                append_child = &gtk::Stack {
-                    set_vexpand: false,
-                    set_vhomogeneous: false,
+                append_child = &gtk::Box {
+                    set_orientation: gtk::Orientation::Vertical,
+                    set_spacing: 5,
                     #[watch]
                     set_visible: model.fan_settings_available(),
 
-                    add_titled[Some(AUTO_PAGE), &fl!(I18N, "auto-page")] = &gtk::Box {
+                    model.pmfw_rows.widget().clone() -> gtk::Box {
                         set_orientation: gtk::Orientation::Vertical,
                         set_spacing: 5,
+                        #[watch]
+                        set_visible: model.selected_mode.is_none() && !model.pmfw_rows.is_empty(),
+                    },
 
-                        model.pmfw_rows.widget().clone() -> gtk::Box {
-                            set_orientation: gtk::Orientation::Vertical,
-                            set_spacing: 5,
-                            #[watch]
-                            set_visible: !model.pmfw_rows.is_empty(),
+                    model.fan_curve_frame.widget().clone() -> gtk::Box {
+                        #[watch]
+                        set_visible: model.selected_mode == Some(FanControlMode::Curve),
+                    },
+
+                    model.static_speed.widget().clone() -> gtk::Box {
+                        #[watch]
+                        set_visible: model.selected_mode == Some(FanControlMode::Static),
+                    },
+
+                    gtk::Box {
+                        set_spacing: 5,
+                        #[watch]
+                        set_visible: model.selected_mode != Some(FanControlMode::Static)
+                            && model.zero_rpm_available,
+
+                        gtk::Label {
+                            set_label: &fl!(I18N, "zero-rpm"),
+                            set_size_group: &model.label_size_group,
+                            set_xalign: 0.0,
                         },
 
-                        gtk::Box {
-                            set_orientation: gtk::Orientation::Horizontal,
-                            set_spacing: 5,
-                            #[watch]
-                            set_visible: model.zero_rpm_available,
-
-                            gtk::Label {
-                                set_label: &fl!(I18N, "zero-rpm"),
-                                set_size_group: &model.label_size_group,
-                                set_xalign: 0.0,
-                            },
-
-                            gtk::Switch {
-                                bind: &model.zero_rpm,
-                                set_hexpand: true,
-                                set_halign: gtk::Align::End,
-                            },
-                        },
-
-                        model.zero_rpm_temperature.widget().clone() -> gtk::Box {
-                            #[watch]
-                            set_visible: !model.zero_rpm_temperature.is_empty(),
-                        },
-
-                        gtk::Button {
-                            set_label: &fl!(I18N, "reset-now-button"),
-                            set_size_group: &model.input_size_group,
+                        gtk::Switch {
+                            bind: &model.zero_rpm,
+                            set_hexpand: true,
                             set_halign: gtk::Align::End,
-                            set_margin_vertical: 5,
-                            set_tooltip_text: Some(&fl!(I18N, "pmfw-reset-warning")),
-                            add_css_class: "destructive-action",
-                            #[watch]
-                            set_visible: model.has_pmfw_options(),
-                            connect_clicked => move |_| {
-                                APP_BROKER.send(AppMsg::ResetPmfw);
-                            }
                         },
                     },
-                    add_titled[Some(CURVE_PAGE), &fl!(I18N, "curve-page")] = model.fan_curve_frame.widget(),
-                    add_titled[Some(STATIC_PAGE), &fl!(I18N, "static-page")] = &gtk::Box {
-                        set_valign: gtk::Align::Start,
-                        set_orientation: gtk::Orientation::Vertical,
-                        set_spacing: 5,
 
-                        model.static_speed.widget(),
+                    model.zero_rpm_temperature.widget().clone() -> gtk::Box {
+                        #[watch]
+                        set_visible: model.selected_mode != Some(FanControlMode::Static)
+                            && !model.zero_rpm_temperature.is_empty(),
                     },
 
-                    add_binding: (&model.selected_mode, "visible-child-name"),
-                    connect_visible_child_name_notify => ThermalsPageMsg::FanModeSelected @ mode_selected_signal,
+                    gtk::Button {
+                        set_label: &fl!(I18N, "reset-now-button"),
+                        set_size_group: &model.input_size_group,
+                        set_halign: gtk::Align::End,
+                        set_margin_vertical: 5,
+                        set_tooltip_text: Some(&fl!(I18N, "pmfw-reset-warning")),
+                        add_css_class: "destructive-action",
+                        #[watch]
+                        set_visible: model.selected_mode.is_none() && model.has_pmfw_options(),
+                        connect_clicked => move |_| {
+                            APP_BROKER.send(AppMsg::ResetPmfw);
+                        }
+                    },
                 }
             }
         },
@@ -203,14 +228,7 @@ impl relm4::Component for ThermalsPage {
         let zero_rpm_change_signal = zero_rpm.connect_value_notify(|_| {
             APP_BROKER.send(AppMsg::SettingsChanged);
         });
-        let fan_curve_frame = FanCurveFrame::builder()
-            .launch(FanCurveFrameInit {
-                zero_rpm: zero_rpm.clone(),
-            })
-            .forward(
-                sender.input_sender(),
-                ThermalsPageMsg::ZeroRpmTemperatureChanged,
-            );
+        let fan_curve_frame = FanCurveFrame::detach(());
         let stats_section = GpuStatsSection::detach(GpuStatsSectionConfig {
             stats: HashSet::from([
                 GpuStat::Throttling,
@@ -229,13 +247,10 @@ impl relm4::Component for ThermalsPage {
                 .forward(APP_BROKER.sender(), |()| AppMsg::SettingsChanged),
             zero_rpm_temperature: FactoryHashMap::builder()
                 .launch_default()
-                .forward(sender.input_sender(), |()| {
-                    ThermalsPageMsg::ZeroRpmTemperatureEdited
-                }),
+                .forward(APP_BROKER.sender(), |()| AppMsg::SettingsChanged),
             static_speed: FactoryHashMap::builder()
                 .launch_default()
                 .forward(APP_BROKER.sender(), |()| AppMsg::SettingsChanged),
-            zero_rpm_temperature_edit: None,
             stats_section,
             fan_curve_frame,
             label_size_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
@@ -248,7 +263,7 @@ impl relm4::Component for ThermalsPage {
             has_fan_speed: false,
             has_pmfw: false,
             has_auto_threshold: false,
-            selected_mode: StringBinding::new(AUTO_PAGE),
+            selected_mode: None,
         };
 
         let widgets = view_output!();
@@ -281,17 +296,8 @@ impl relm4::Component for ThermalsPage {
                     self.has_fan_speed =
                         stats.fan.pwm_current.is_some() || stats.fan.speed_current.is_some();
                     if initial {
-                        let page_name = match stats.fan.control_mode {
-                            Some(mode) if stats.fan.control_enabled => match mode {
-                                FanControlMode::Static => STATIC_PAGE,
-                                FanControlMode::Curve => CURVE_PAGE,
-                            },
-                            _ => AUTO_PAGE,
-                        };
-
-                        widgets.stack.block_signal(&widgets.mode_selected_signal);
-                        self.selected_mode.set(page_name.to_owned());
-                        widgets.stack.unblock_signal(&widgets.mode_selected_signal);
+                        self.selected_mode =
+                            stats.fan.control_mode.filter(|_| stats.fan.control_enabled);
 
                         let speed_range = stats
                             .fan
@@ -308,7 +314,6 @@ impl relm4::Component for ThermalsPage {
                         self.nvidia_target_temperature.clear();
                         self.zero_rpm_temperature.clear();
                         self.static_speed.clear();
-                        self.zero_rpm_temperature_edit = None;
 
                         self.static_speed.insert(
                             (),
@@ -339,8 +344,6 @@ impl relm4::Component for ThermalsPage {
                             temperature_range,
                             auto_threshold_supported: self.has_auto_threshold,
                             auto_threshold: stats.fan.auto_threshold,
-                            zero_rpm_available: stats.fan.pmfw_info.zero_rpm_enable.is_some(),
-                            zero_rpm_temperature: stats.fan.pmfw_info.zero_rpm_temperature,
                         };
                         self.fan_curve_frame.emit(FanCurveFrameMsg::Curve(msg));
 
@@ -410,27 +413,8 @@ impl relm4::Component for ThermalsPage {
                     }
                 }
             },
-            ThermalsPageMsg::FanModeSelected => {
-                APP_BROKER.send(AppMsg::SettingsChanged);
-            }
-            ThermalsPageMsg::ZeroRpmTemperatureEdited => {
-                if let Some(value) = self
-                    .zero_rpm_temperature
-                    .get(&())
-                    .and_then(|row| row.get_changed_value())
-                {
-                    self.zero_rpm_temperature_edit = Some(value as u32);
-                    self.fan_curve_frame
-                        .emit(FanCurveFrameMsg::SyncZeroRpmTemperature(value));
-                }
-                APP_BROKER.send(AppMsg::SettingsChanged);
-            }
-            ThermalsPageMsg::ZeroRpmTemperatureChanged(value) => {
-                if !self.zero_rpm_temperature.is_empty() {
-                    self.zero_rpm_temperature_edit = Some(value as u32);
-                    self.zero_rpm_temperature
-                        .send(&(), AdjustmentRowMsg::SyncValue(value));
-                }
+            ThermalsPageMsg::FanModeSelected(mode) => {
+                self.selected_mode = mode;
                 APP_BROKER.send(AppMsg::SettingsChanged);
             }
             ThermalsPageMsg::RestNvidiaOptions => {
@@ -453,22 +437,18 @@ impl relm4::Component for ThermalsPage {
 
 impl ThermalsPage {
     fn fan_settings_available(&self) -> bool {
-        self.has_fan_speed && (self.selected_mode.value() != AUTO_PAGE || self.has_pmfw_options())
+        self.has_fan_speed && (self.selected_mode.is_some() || self.has_pmfw_options())
     }
 
     pub fn apply_config(&self, config: &mut GpuConfig) {
-        let selected_page = self.selected_mode.value();
-
-        if selected_page == AUTO_PAGE {
-            config.fan_control_enabled = false;
-        } else {
+        if let Some(mode) = self.selected_mode {
             config.fan_control_enabled = true;
             let fan_settings = config
                 .fan_control_settings
                 .get_or_insert_with(FanControlSettings::default);
 
-            match selected_page.as_str() {
-                CURVE_PAGE => {
+            match mode {
+                FanControlMode::Curve => {
                     fan_settings.mode = FanControlMode::Curve;
 
                     let fan_curve_model = self.fan_curve_frame.model();
@@ -484,7 +464,7 @@ impl ThermalsPage {
                         fan_settings.temperature_key = temp_key;
                     }
                 }
-                STATIC_PAGE => {
+                FanControlMode::Static => {
                     fan_settings.mode = FanControlMode::Static;
                     fan_settings.static_speed = self
                         .static_speed
@@ -492,8 +472,9 @@ impl ThermalsPage {
                         .map(|row| row.get_value() as f32 / 100.0)
                         .unwrap_or(0.5);
                 }
-                _ => unreachable!("Invalid fan control page selected"),
             }
+        } else {
+            config.fan_control_enabled = false;
         }
 
         let pmfw_config = &mut config.pmfw_options;
@@ -520,8 +501,12 @@ impl ThermalsPage {
                 *config_value = Some(value as u32);
             }
         }
-        if let Some(value) = self.zero_rpm_temperature_edit {
-            pmfw_config.zero_rpm_threshold = Some(value);
+        if let Some(value) = self
+            .zero_rpm_temperature
+            .get(&())
+            .and_then(|row| row.get_changed_value())
+        {
+            pmfw_config.zero_rpm_threshold = Some(value as u32);
         }
         if let Some(value) = self
             .nvidia_target_temperature

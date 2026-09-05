@@ -1,4 +1,3 @@
-use super::fan_info_init;
 use crate::{
     APP_BROKER, I18N,
     app::{
@@ -8,7 +7,6 @@ use crate::{
     },
 };
 use adw::prelude::*;
-use amdgpu_sysfs::gpu_handle::fan_control::FanInfo;
 use gtk::{
     gdk,
     glib::{self, SignalHandlerId},
@@ -28,8 +26,7 @@ use plotters::{
 };
 use plotters_cairo::CairoBackend;
 use relm4::{
-    ComponentParts, ComponentSender, RelmObjectExt, RelmWidgetExt,
-    binding::{BoolBinding, ConnectBinding, U32Binding},
+    ComponentParts, ComponentSender, RelmObjectExt, RelmWidgetExt, binding::U32Binding,
     factory::FactoryHashMap,
 };
 use std::{
@@ -48,18 +45,11 @@ const DEFAULT_SPINDOWN_DELAY_MS: u64 = 5000;
 const TEMPERATURE_DRAG_MARGIN: f32 = 4.0;
 const PERCENTAGE_DRAG_MARGIN: f32 = 0.04;
 
-pub(super) struct FanCurveFrameInit {
-    pub zero_rpm: BoolBinding,
-}
-
 #[derive(Clone)]
 pub(super) struct FanCurveFrame {
     adjustments: Rc<RefCell<FactoryHashMap<CurveSetting, AdjustmentRow<CurveSetting>>>>,
-    zero_rpm_temperature: Rc<RefCell<FactoryHashMap<(), AdjustmentRow<()>>>>,
     label_size_group: gtk::SizeGroup,
     input_size_group: gtk::SizeGroup,
-    zero_rpm: BoolBinding,
-    zero_rpm_available: bool,
     /// PMFW fan control on AMD RDNA3+ with fixed length
     hw_based_fan_curve: Rc<AtomicBool>,
 
@@ -99,8 +89,6 @@ pub(super) enum FanCurveFrameMsg {
     AddPoint,
     RemovePoint,
     DefaultCurve,
-    ZeroRpmTemperatureEdited,
-    SyncZeroRpmTemperature(f64),
 }
 
 #[derive(Debug)]
@@ -117,16 +105,13 @@ pub(super) struct CurveSetupMsg {
     /// Nvidia only
     pub auto_threshold_supported: bool,
     pub auto_threshold: Option<u64>,
-    pub zero_rpm_available: bool,
-    pub zero_rpm_temperature: Option<FanInfo>,
 }
 
 #[relm4::component(pub)]
 impl relm4::Component for FanCurveFrame {
-    type Init = FanCurveFrameInit;
+    type Init = ();
     type Input = FanCurveFrameMsg;
-    // Edits to the zero-RPM temperature are mirrored to the Automatic tab.
-    type Output = f64;
+    type Output = ();
     type CommandOutput = ();
 
     view! {
@@ -220,30 +205,6 @@ impl relm4::Component for FanCurveFrame {
                 set_visible: !model.hw_based_fan_curve.load(Ordering::SeqCst)
                     || model.adjustments.borrow().get(&CurveSetting::AutoThreshold).is_some(),
             },
-
-            gtk::Box {
-                set_orientation: gtk::Orientation::Horizontal,
-                set_spacing: 5,
-                #[watch]
-                set_visible: model.zero_rpm_available,
-
-                gtk::Label {
-                    set_label: &fl!(I18N, "zero-rpm"),
-                    set_size_group: &model.label_size_group,
-                    set_xalign: 0.0,
-                },
-
-                gtk::Switch {
-                    bind: &model.zero_rpm,
-                    set_hexpand: true,
-                    set_halign: gtk::Align::End,
-                },
-            },
-
-            model.zero_rpm_temperature.borrow().widget().clone() -> gtk::Box {
-                #[watch]
-                set_visible: !model.zero_rpm_temperature.borrow().is_empty(),
-            },
         },
     }
 
@@ -254,7 +215,7 @@ impl relm4::Component for FanCurveFrame {
     }
 
     fn init(
-        init: Self::Init,
+        _init: Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -270,17 +231,8 @@ impl relm4::Component for FanCurveFrame {
                     .launch_default()
                     .forward(APP_BROKER.sender(), |()| AppMsg::SettingsChanged),
             )),
-            zero_rpm_temperature: Rc::new(RefCell::new(
-                FactoryHashMap::builder()
-                    .launch_default()
-                    .forward(sender.input_sender(), |()| {
-                        FanCurveFrameMsg::ZeroRpmTemperatureEdited
-                    }),
-            )),
             label_size_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
             input_size_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
-            zero_rpm: init.zero_rpm,
-            zero_rpm_available: false,
             hw_based_fan_curve: Rc::new(AtomicBool::new(false)),
             is_dragging: Rc::new(AtomicBool::new(false)),
             speed_range: Rc::new(RefCell::new(DEFAULT_SPEED_RANGE)),
@@ -347,9 +299,7 @@ impl relm4::Component for FanCurveFrame {
 
                 self.current_temp_key
                     .unblock_signal(&self.temp_key_change_signal);
-                self.zero_rpm_available = msg.zero_rpm_available;
                 self.adjustments.borrow_mut().clear();
-                self.zero_rpm_temperature.borrow_mut().clear();
                 for (setting, init) in [
                     (
                         CurveSetting::SpindownDelay,
@@ -410,38 +360,7 @@ impl relm4::Component for FanCurveFrame {
                         );
                     }
                 }
-                if let Some(init) =
-                    fan_info_init(fl!(I18N, "zero-rpm-stop-temp"), msg.zero_rpm_temperature)
-                {
-                    self.zero_rpm_temperature.borrow_mut().insert((), init);
-                    self.zero_rpm_temperature.borrow().send(
-                        &(),
-                        AdjustmentRowMsg::AddSizeGroup {
-                            label_group: self.label_size_group.clone(),
-                            input_group: self.input_size_group.clone(),
-                        },
-                    );
-                }
-
                 widgets.drawing_area.queue_draw();
-            }
-            FanCurveFrameMsg::ZeroRpmTemperatureEdited => {
-                if let Some(value) = self
-                    .zero_rpm_temperature
-                    .borrow()
-                    .get(&())
-                    .and_then(|row| row.get_changed_value())
-                {
-                    let _ = sender.output(value);
-                } else {
-                    APP_BROKER.send(AppMsg::SettingsChanged);
-                }
-            }
-            FanCurveFrameMsg::SyncZeroRpmTemperature(value) => {
-                let rows = self.zero_rpm_temperature.borrow();
-                if !rows.is_empty() {
-                    rows.send(&(), AdjustmentRowMsg::SyncValue(value));
-                }
             }
             FanCurveFrameMsg::DragStart => {
                 self.is_dragging.store(true, Ordering::SeqCst);

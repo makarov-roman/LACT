@@ -45,8 +45,6 @@ pub enum AdjustmentRowMsg {
     ValueRatio(f64),
     /// Set a value as an edit, for example when the user presses Reset.
     SetValue(f64),
-    /// Mirror an edit from another row without sending another edit notification.
-    SyncValue(f64),
     SetVisible(bool),
     AddSizeGroup {
         label_group: gtk::SizeGroup,
@@ -191,15 +189,6 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
             }
             AdjustmentRowMsg::SetValue(value) => {
                 self.adjustment.set_value(value * self.value_ratio);
-            }
-            AdjustmentRowMsg::SyncValue(value) => {
-                self.adjustment.block_signal(&widgets.value_change_signal);
-                widgets.spinbutton.block_signal(&widgets.text_change_signal);
-                self.adjustment.set_value(value * self.value_ratio);
-                widgets
-                    .spinbutton
-                    .unblock_signal(&widgets.text_change_signal);
-                self.adjustment.unblock_signal(&widgets.value_change_signal);
             }
             AdjustmentRowMsg::SetVisible(visible) => widgets.root_box.set_visible(visible),
             AdjustmentRowMsg::AddSizeGroup {
