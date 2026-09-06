@@ -93,7 +93,7 @@ impl AdjustmentGroup {
                 value: f64::from(data.current),
                 lower: f64::from(data.min),
                 upper: f64::from(data.max),
-                step_increment: f64::from(data.step),
+                step_increment: get_row_step(clock_type),
                 ..Default::default()
             },
         );
@@ -187,6 +187,18 @@ impl AdjustmentGroup {
             .get(&clock_type)
             .map(|row| row.get_value() as i32)
             .unwrap_or(0)
+    }
+}
+
+fn get_row_step(clock_type: ClockspeedType) -> f64 {
+    match ClockCategory::from_type(clock_type) {
+        ClockCategory::CoreClock
+        | ClockCategory::VramClock
+        | ClockCategory::CoreCurveClock
+        | ClockCategory::VramCurveClock => 5.0,
+        ClockCategory::CoreVoltage
+        | ClockCategory::CoreCurveVoltage
+        | ClockCategory::VramCurveVoltage => 1.0,
     }
 }
 
