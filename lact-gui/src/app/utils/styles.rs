@@ -67,7 +67,7 @@ pub fn apply_theme(theme: AppTheme) -> anyhow::Result<()> {
         style_context_add_provider_for_display(
             &display,
             &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_THEME,
+            gtk::STYLE_PROVIDER_PRIORITY_SETTINGS,
         );
 
         EXISTING_STYLE_PROVIDER.set(Some(provider));
