@@ -27,7 +27,7 @@ const DEFAULT_VOLTAGE_OFFSET_RANGE: i32 = 250;
 
 pub struct ClocksFrame {
     adjustments: FactoryHashMap<ClockspeedType, AdjustmentRow<ClockspeedType>>,
-    secondary_clocks: HashSet<ClockspeedType>,
+    secondary_p_state_clocks: HashSet<ClockspeedType>,
     domain: ClockDomain,
     vram_clock_ratio: f64,
     show_nvidia_options: bool,
@@ -43,7 +43,7 @@ struct ClocksData {
     min: i32,
     max: i32,
     custom_title: Option<String>,
-    is_secondary: bool,
+    is_secondary_p_state: bool,
 }
 
 impl ClocksData {
@@ -158,14 +158,14 @@ impl relm4::Component for ClocksFrame {
                 #[template_child]
                 advanced_features {
                     #[watch]
-                    set_visible: model.any_is_secondary() || model.show_nvidia_options,
+                    set_visible: model.has_secondary_p_states() || model.show_nvidia_options,
                 },
 
                 #[template_child]
                 controls {
                     append = &gtk::ToggleButton {
                         #[watch]
-                        set_visible: model.any_is_secondary(),
+                        set_visible: model.has_secondary_p_states(),
 
                         add_css_class: "adjustment-card-option-toggle",
                         add_binding["active"]: &model.show_all_pstates,
@@ -254,7 +254,7 @@ impl relm4::Component for ClocksFrame {
             adjustments: FactoryHashMap::builder()
                 .launch_default()
                 .forward(APP_BROKER.sender(), |()| AppMsg::SettingsChanged),
-            secondary_clocks: HashSet::new(),
+            secondary_p_state_clocks: HashSet::new(),
             domain,
             vram_clock_ratio: 1.0,
             show_nvidia_options: false,
@@ -301,7 +301,7 @@ impl relm4::Component for ClocksFrame {
                     .block_signal(&widgets.locked_clock_signal);
 
                 self.adjustments.clear();
-                self.secondary_clocks.clear();
+                self.secondary_p_state_clocks.clear();
 
                 self.enable_locked_clocks.set_value(false);
                 self.vf_curve_editing.set_value(vf_curve_is_configured);
@@ -367,7 +367,7 @@ impl relm4::Component for ClocksFrame {
                             false
                         }
                         _ => {
-                            !self.secondary_clocks.contains(clock_type)
+                            !self.secondary_p_state_clocks.contains(clock_type)
                                 || self.show_all_pstates.value()
                         }
                     };
@@ -403,10 +403,10 @@ impl ClocksFrame {
                 ..Default::default()
             },
         );
-        if data.is_secondary {
-            self.secondary_clocks.insert(clock_type);
+        if data.is_secondary_p_state {
+            self.secondary_p_state_clocks.insert(clock_type);
         } else {
-            self.secondary_clocks.remove(&clock_type);
+            self.secondary_p_state_clocks.remove(&clock_type);
         }
     }
 
@@ -414,8 +414,8 @@ impl ClocksFrame {
         !self.adjustments.is_empty()
     }
 
-    fn any_is_secondary(&self) -> bool {
-        !self.secondary_clocks.is_empty()
+    fn has_secondary_p_states(&self) -> bool {
+        !self.secondary_p_state_clocks.is_empty()
     }
 
     fn update_vram_clock_ratio(&self) {
@@ -599,7 +599,7 @@ impl ClocksFrame {
     ) {
         let values_len = values.len();
         for (i, value) in values.enumerate().rev() {
-            let is_secondary = i > 0 && i < values_len - 1;
+            let is_secondary_p_state = i > 0 && i < values_len - 1;
 
             self.set_clock(
                 clock_type(i as u8),
@@ -607,7 +607,7 @@ impl ClocksFrame {
                     current: value,
                     min,
                     max,
-                    is_secondary,
+                    is_secondary_p_state,
                     ..Default::default()
                 },
             );
@@ -725,12 +725,15 @@ impl ClocksFrame {
     }
 }
 
-fn nvidia_clock_offset_to_data(clock_info: &NvidiaClockOffset, is_secondary: bool) -> ClocksData {
+fn nvidia_clock_offset_to_data(
+    clock_info: &NvidiaClockOffset,
+    is_secondary_p_state: bool,
+) -> ClocksData {
     ClocksData {
         current: clock_info.current,
         min: clock_info.min,
         max: clock_info.max,
-        is_secondary,
+        is_secondary_p_state,
         ..Default::default()
     }
 }
