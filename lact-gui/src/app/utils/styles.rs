@@ -64,7 +64,11 @@ pub fn apply_theme(theme: AppTheme) -> anyhow::Result<()> {
         #[allow(deprecated)]
         provider.load_from_data(css);
 
-        style_context_add_provider_for_display(&display, &provider, 900);
+        style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_THEME,
+        );
 
         EXISTING_STYLE_PROVIDER.set(Some(provider));
     }
