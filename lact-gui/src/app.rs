@@ -5,6 +5,7 @@ pub mod graphs_window;
 mod info_dialog;
 pub(crate) mod msg;
 mod overdrive_dialog;
+mod page_navigation;
 pub(crate) mod pages;
 mod preferences_dialog;
 mod process_monitor;
@@ -52,6 +53,7 @@ use lact_schema::{
     request::{ConfirmCommand, ProfileBase, SetClocksCommand},
 };
 use msg::AppMsg;
+use page_navigation::{PageNavigation, PageNavigationInit};
 use pages::{
     PageUpdate,
     crash_page::CrashPage,
@@ -120,6 +122,7 @@ pub struct AppModel {
     software_page: relm4::Controller<SoftwarePage>,
     displays_page: relm4::Controller<DisplaysPage>,
     crash_page: relm4::Controller<CrashPage>,
+    page_navigation: relm4::Controller<PageNavigation>,
     service_setup_dialog: Option<AsyncController<ServiceSetupDialog>>,
 
     gpu_selector: relm4::Controller<GpuSelector>,
@@ -212,11 +215,7 @@ impl AsyncComponent for AppModel {
 
                                     gtk::Separator {},
 
-                                    gtk::StackSidebar {
-                                        set_margin_vertical: 1,
-                                        set_stack: &root_stack,
-                                        set_vexpand: true,
-                                    },
+                                    model.page_navigation.widget(),
 
                                     gtk::Separator {},
 
@@ -284,25 +283,13 @@ impl AsyncComponent for AppModel {
                                 },
 
                                 #[wrap(Some)]
-                                set_content = &gtk::ScrolledWindow {
-                                    set_hscrollbar_policy: gtk::PolicyType::Never,
-
-                                    adw::Clamp {
-                                        set_maximum_size: CONTENT_MAXIMUM_WIDTH,
-                                        set_tightening_threshold: CONTENT_MAXIMUM_WIDTH,
-
-                                        #[name = "root_stack"]
-                                        gtk::Stack {
-                                            set_vexpand: false,
+                                #[name = "root_stack"]
+                                set_content = model.page_navigation.model().stack.clone() -> gtk::Stack {
+                                            set_vexpand: true,
                                             set_vhomogeneous: false,
 
                                             add_binding: (&model.ui_sensitive, "sensitive"),
 
-                                            add_titled[Some("info_page"), &fl!(I18N, "info-page")] = model.info_page.widget(),
-                                            add_titled[Some("oc_page"), &fl!(I18N, "oc-page")] = model.oc_page.widget(),
-                                            add_titled[Some("thermals_page"), &fl!(I18N, "thermals-page")] = model.thermals_page.widget(),
-                                            add_titled[Some("software_page"), &fl!(I18N, "software-page")] = model.software_page.widget(),
-                                            add_titled[Some("displays_page"), &fl!(I18N, "displays-page")] = model.displays_page.widget(),
                                             add_named[Some("crash_page")] = model.crash_page.widget(),
 
                                             set_visible_child_name: &CONFIG.read().selected_tab,
@@ -319,8 +306,6 @@ impl AsyncComponent for AppModel {
                                                     }
                                                 }
                                             },
-                                        }
-                                    }
                                 },
                             }
                         }
@@ -434,6 +419,39 @@ impl AsyncComponent for AppModel {
 
         let displays_page = DisplaysPage::detach_default();
 
+        let ui_sensitive = BoolBinding::new(false);
+        let page_navigation = PageNavigation::detach(PageNavigationInit {
+            pages: vec![
+                (
+                    "info_page",
+                    fl!(I18N, "info-page"),
+                    info_page.widget().clone().upcast(),
+                ),
+                (
+                    "oc_page",
+                    fl!(I18N, "oc-page"),
+                    oc_page.widget().clone().upcast(),
+                ),
+                (
+                    "thermals_page",
+                    fl!(I18N, "thermals-page"),
+                    thermals_page.widget().clone().upcast(),
+                ),
+                (
+                    "software_page",
+                    fl!(I18N, "software-page"),
+                    software_page.widget().clone().upcast(),
+                ),
+                (
+                    "displays_page",
+                    fl!(I18N, "displays-page"),
+                    displays_page.widget().clone().upcast(),
+                ),
+            ],
+            parent: root.clone(),
+            sensitive: ui_sensitive.clone(),
+        });
+
         let crash_page = CrashPage::launch_default().forward(sender.input_sender(), |msg| msg);
 
         let overdrive_dialog =
@@ -499,10 +517,11 @@ impl AsyncComponent for AppModel {
             software_page,
             crash_page,
             displays_page,
+            page_navigation,
             gpu_selector,
             profile_selector,
             service_setup_dialog: None,
-            ui_sensitive: BoolBinding::new(false),
+            ui_sensitive,
             is_reconnecting: BoolBinding::new(false),
             stats_task_handle: None,
             settings_changed,
@@ -851,6 +870,7 @@ impl AppModel {
                 result?;
             }
             AppMsg::EnablePstateConfig => {
+                root.present();
                 self.info_dialog
                     .emit(InfoDialogMsg::Show(Box::new(InfoDialogData {
                         id: InfoDialogId::EnablePstateConfigConfirmation,
@@ -929,6 +949,7 @@ impl AppModel {
                 self.reload_profiles(None).await?;
             }
             AppMsg::Crash(message) => {
+                self.page_navigation.model().close_windows();
                 // we cannot be sure that the application is fully functional after a crash
                 // even though the main loop is restored via crash handler, we want user to restart
                 // this is why navigation controls are disabled

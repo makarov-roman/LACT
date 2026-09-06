@@ -3,6 +3,10 @@ oc-page = Overclocking
 thermals-page = Thermals
 software-page = Software Info
 displays-page = Display Info
+detach-page = Open {$page} in a Window
+page-detached = This page is open in another window.
+show-page-window = Show Window
+reattach-page = Return to Main Window
 
 hardware-info = Hardware Information
 
