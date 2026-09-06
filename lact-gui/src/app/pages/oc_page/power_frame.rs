@@ -11,7 +11,7 @@ use crate::{
             OcPageMsg,
             performance_frame::{PerformanceFrame, PerformanceFrameMsg},
         },
-        utils::ext::{RelmDefaultLauchable, RelmLaunchable},
+        utils::ext::RelmDefaultLauchable,
     },
 };
 use adw::prelude::*;
@@ -19,11 +19,11 @@ use amdgpu_sysfs::gpu_handle::PerformanceLevel;
 use i18n_embed_fl::fl;
 use lact_schema::PowerStats;
 use nvml_wrapper::enums::device::PowerMizerMode;
-use relm4::{ComponentController, ComponentParts, ComponentSender};
+use relm4::{ComponentController, ComponentParts, ComponentSender, factory::FactoryHashMap};
 
 pub struct PowerFrame {
     power: PowerStats,
-    power_row: Option<relm4::Controller<AdjustmentRow>>,
+    power_row: FactoryHashMap<(), AdjustmentRow<()>>,
     performance_frame: relm4::Controller<PerformanceFrame>,
 }
 
@@ -55,17 +55,17 @@ impl relm4::Component for PowerFrame {
                 set_halign: gtk::Align::End,
                 set_hexpand: true,
                 #[watch]
-                set_visible: model.power_row.is_some(),
+                set_visible: !model.power_row.is_empty(),
             },
             #[template]
             append_child = &AdjustmentCard {
                 #[template_child]
                 content {
-                    #[name = "power_row_box"]
-                    gtk::Box {
+                    #[local_ref]
+                    power_row_widget -> gtk::Box {
                         set_orientation: gtk::Orientation::Vertical,
                         #[watch]
-                        set_visible: model.power_row.is_some(),
+                        set_visible: !model.power_row.is_empty(),
                     },
 
                     append: model.performance_frame.widget(),
@@ -81,7 +81,9 @@ impl relm4::Component for PowerFrame {
     ) -> ComponentParts<Self> {
         let model = Self {
             power: PowerStats::default(),
-            power_row: None,
+            power_row: FactoryHashMap::builder()
+                .launch_default()
+                .forward(APP_BROKER.sender(), |()| AppMsg::SettingsChanged),
             performance_frame: PerformanceFrame::launch_default()
                 .forward(sender.output_sender(), |msg| msg),
         };
@@ -93,6 +95,7 @@ impl relm4::Component for PowerFrame {
                 visibility_sender.input(PowerFrameMsg::RefreshVisibility);
             });
 
+        let power_row_widget = model.power_row.widget();
         let widgets = view_output!();
 
         ComponentParts { model, widgets }
@@ -107,22 +110,19 @@ impl relm4::Component for PowerFrame {
     ) {
         match msg {
             PowerFrameMsg::PowerStats(power) => {
-                if let Some(row) = self.power_row.take() {
-                    widgets.power_row_box.remove(row.widget());
-                }
+                self.power_row.clear();
 
                 if let Some(value) = power.cap_current {
-                    let row = AdjustmentRow::launch(AdjustmentRowInit {
-                        title: format!("{} ({})", fl!(I18N, "power-cap"), fl!(I18N, "watt")),
-                        value,
-                        lower: power.cap_min.unwrap_or_default(),
-                        upper: power.cap_max.unwrap_or_default(),
-                        ..Default::default()
-                    })
-                    .connect_receiver(|_, ()| APP_BROKER.send(AppMsg::SettingsChanged));
-
-                    widgets.power_row_box.append(row.widget());
-                    self.power_row = Some(row);
+                    self.power_row.insert(
+                        (),
+                        AdjustmentRowInit {
+                            title: format!("{} ({})", fl!(I18N, "power-cap"), fl!(I18N, "watt")),
+                            value,
+                            lower: power.cap_min.unwrap_or_default(),
+                            upper: power.cap_max.unwrap_or_default(),
+                            ..Default::default()
+                        },
+                    );
                 }
 
                 self.power = power;
@@ -132,10 +132,11 @@ impl relm4::Component for PowerFrame {
             }
             PowerFrameMsg::RefreshVisibility => (),
             PowerFrameMsg::Reset => {
-                if let Some(row) = &self.power_row {
-                    row.emit(AdjustmentRowMsg::SetValue(
-                        self.power.cap_default.unwrap_or_default(),
-                    ));
+                if !self.power_row.is_empty() {
+                    self.power_row.send(
+                        &(),
+                        AdjustmentRowMsg::SetValue(self.power.cap_default.unwrap_or_default()),
+                    );
                 }
             }
         }
@@ -146,13 +147,12 @@ impl relm4::Component for PowerFrame {
 
 impl PowerFrame {
     fn is_available(&self) -> bool {
-        self.power_row.is_some() || self.performance_frame.widget().get_visible()
+        !self.power_row.is_empty() || self.performance_frame.widget().get_visible()
     }
 
     pub fn get_user_cap(&self) -> Option<f64> {
         self.power_row
-            .as_ref()?
-            .model()
+            .get(&())?
             .get_changed_value()
             .filter(|value| *value != 0.0)
     }

@@ -1,15 +1,21 @@
 use super::adjustment_value::AdjustmentValue;
 use crate::app::utils::ext::make_event_controller_no_scroll;
-use gtk::prelude::*;
-use relm4::{ComponentParts, ComponentSender, RelmWidgetExt, css};
+use adw::prelude::*;
+use relm4::{FactorySender, RelmWidgetExt, css, factory::FactoryComponent};
+use std::marker::PhantomData;
 
-pub struct AdjustmentRow {
+pub struct AdjustmentRow<Key> {
+    title: String,
+    title_tooltip: String,
+    info_text: String,
+    _key: PhantomData<Key>,
     adjustment: AdjustmentValue,
     value_ratio: f64,
 }
 
 pub struct AdjustmentRowInit {
     pub title: String,
+    pub title_tooltip: String,
     pub info_text: String,
     pub value: f64,
     pub lower: f64,
@@ -22,6 +28,7 @@ impl Default for AdjustmentRowInit {
     fn default() -> Self {
         Self {
             title: String::new(),
+            title_tooltip: String::new(),
             info_text: String::new(),
             value: 0.0,
             lower: 0.0,
@@ -34,7 +41,7 @@ impl Default for AdjustmentRowInit {
 
 #[derive(Debug)]
 pub enum AdjustmentRowMsg {
-    /// Change display units while preserving the configured value and edit state.
+    /// Change display units and reset the edit state.
     ValueRatio(f64),
     /// Set a value as an edit, for example when the user presses Reset.
     SetValue(f64),
@@ -45,8 +52,10 @@ pub enum AdjustmentRowMsg {
     },
 }
 
-#[relm4::component(pub)]
-impl relm4::Component for AdjustmentRow {
+#[relm4::factory(pub)]
+impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
+    type ParentWidget = gtk::Box;
+    type Index = Key;
     type Init = AdjustmentRowInit;
     type Input = AdjustmentRowMsg;
     // Both slider changes and uncommitted spin-button text edits notify the parent.
@@ -55,9 +64,10 @@ impl relm4::Component for AdjustmentRow {
 
     view! {
         #[root]
+        #[name = "root_box"]
         gtk::Box {
             set_orientation: gtk::Orientation::Horizontal,
-            set_spacing: 5,
+            add_css_class: "adjustment-row",
 
             #[name = "title_box"]
             gtk::Box {
@@ -66,7 +76,8 @@ impl relm4::Component for AdjustmentRow {
                 #[name = "label"]
                 gtk::Label {
                     set_xalign: 0.0,
-                    set_label: &init.title,
+                    set_markup: &self.title,
+                    set_tooltip_text: (!self.title_tooltip.is_empty()).then_some(self.title_tooltip.as_str()),
                 },
 
                 #[name = "info_button"]
@@ -74,13 +85,13 @@ impl relm4::Component for AdjustmentRow {
                     set_icon_name: "dialog-information-symbolic",
                     set_always_show_arrow: false,
                     add_css_class: css::FLAT,
-                    set_visible: !init.info_text.is_empty(),
+                    set_visible: !self.info_text.is_empty(),
 
                     #[wrap(Some)]
                     set_popover = &gtk::Popover {
                         #[name = "info_label"]
                         gtk::Label {
-                            set_label: &init.info_text,
+                            set_label: &self.info_text,
                             set_margin_all: 5,
                             set_wrap: true,
                             set_wrap_mode: gtk::pango::WrapMode::Word,
@@ -92,7 +103,7 @@ impl relm4::Component for AdjustmentRow {
 
             #[name = "scale"]
             gtk::Scale {
-                set_adjustment: &model.adjustment,
+                set_adjustment: &self.adjustment,
                 set_orientation: gtk::Orientation::Horizontal,
                 set_hexpand: true,
                 set_digits: 0,
@@ -104,7 +115,7 @@ impl relm4::Component for AdjustmentRow {
 
             #[name = "spinbutton"]
             gtk::SpinButton {
-                set_adjustment: &model.adjustment,
+                set_adjustment: &self.adjustment,
                 add_controller = make_event_controller_no_scroll(),
                 connect_changed[sender] => move |_| {
                     let _ = sender.output(());
@@ -120,12 +131,12 @@ impl relm4::Component for AdjustmentRow {
         },
     }
 
-    fn init(
-        init: Self::Init,
-        root: Self::Root,
-        sender: ComponentSender<Self>,
-    ) -> ComponentParts<Self> {
-        let model = Self {
+    fn init_model(init: Self::Init, _index: &Self::Index, _sender: FactorySender<Self>) -> Self {
+        Self {
+            title: init.title,
+            title_tooltip: init.title_tooltip,
+            info_text: init.info_text,
+            _key: PhantomData,
             adjustment: AdjustmentValue::new(
                 init.value,
                 init.lower,
@@ -134,18 +145,26 @@ impl relm4::Component for AdjustmentRow {
                 init.page_increment,
             ),
             value_ratio: 1.0,
-        };
-        let adjustment = &model.adjustment;
+        }
+    }
+
+    fn init_widgets(
+        &mut self,
+        _index: &Self::Index,
+        root: Self::Root,
+        _returned_widget: &gtk::Widget,
+        sender: FactorySender<Self>,
+    ) -> Self::Widgets {
+        let adjustment = &self.adjustment;
         let widgets = view_output!();
-        ComponentParts { model, widgets }
+        widgets
     }
 
     fn update_with_view(
         &mut self,
         widgets: &mut Self::Widgets,
         msg: Self::Input,
-        _sender: ComponentSender<Self>,
-        root: &Self::Root,
+        _sender: FactorySender<Self>,
     ) {
         match msg {
             AdjustmentRowMsg::ValueRatio(ratio) => {
@@ -153,22 +172,15 @@ impl relm4::Component for AdjustmentRow {
                 self.adjustment.block_signal(&widgets.value_change_signal);
                 widgets.spinbutton.block_signal(&widgets.text_change_signal);
 
-                let changed = self.get_changed_value().is_some();
-                let value = self.get_value();
-                let lower = self.adjustment.lower() / self.value_ratio;
-                let upper = self.adjustment.upper() / self.value_ratio;
+                let raw_current = self.adjustment.value() / self.value_ratio;
+                let raw_min = self.adjustment.lower() / self.value_ratio;
+                let raw_max = self.adjustment.upper() / self.value_ratio;
+
+                self.adjustment.set_lower(raw_min * ratio);
+                self.adjustment.set_upper(raw_max * ratio);
+                self.adjustment.set_initial_value(raw_current * ratio);
+
                 self.value_ratio = ratio;
-                self.adjustment.configure(
-                    value * ratio,
-                    lower * ratio,
-                    upper * ratio,
-                    self.adjustment.step_increment(),
-                    self.adjustment.page_increment(),
-                    0.0,
-                );
-                if !changed {
-                    self.adjustment.set_initial_value(value * ratio);
-                }
 
                 widgets
                     .spinbutton
@@ -178,7 +190,7 @@ impl relm4::Component for AdjustmentRow {
             AdjustmentRowMsg::SetValue(value) => {
                 self.adjustment.set_value(value * self.value_ratio);
             }
-            AdjustmentRowMsg::SetVisible(visible) => root.set_visible(visible),
+            AdjustmentRowMsg::SetVisible(visible) => widgets.root_box.set_visible(visible),
             AdjustmentRowMsg::AddSizeGroup {
                 label_group,
                 input_group,
@@ -190,7 +202,7 @@ impl relm4::Component for AdjustmentRow {
     }
 }
 
-impl AdjustmentRow {
+impl<Key> AdjustmentRow<Key> {
     pub fn get_value(&self) -> f64 {
         self.adjustment.value() / self.value_ratio
     }
