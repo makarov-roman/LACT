@@ -154,9 +154,9 @@ performance-level-high-description = Always use the highest clockspeeds for GPU 
 performance-level-low-description = Always use the lowest clockspeeds for GPU and VRAM
 performance-level-manual-description = Manual performance control
 performance-level-profile-standard-description = Fixed profiling mode
-performance-level-profile-min-sclk-description = forces the GPU clock to lowest level
-performance-level-profile-min-mclk-description = forces the VRAM clock to lowest level
-performance-level-profile-peak-description = forces GPU and VRAM clocks to highest levels
+performance-level-profile-min-sclk-description = Forces the GPU clock to lowest level
+performance-level-profile-min-mclk-description = Forces the VRAM clock to lowest level
+performance-level-profile-peak-description = Forces GPU and VRAM clocks to highest levels
 
 performance-level = Performance Level
 power-profile-mode = Power Profile Mode:
@@ -172,13 +172,6 @@ power-mizer-mode-prefer-maximum-performance-description = Favor maximum performa
 power-mizer-mode-prefer-consistent-performance-description = Lock to GPU base clocks.
 
 overclock-section = Clockspeed and Voltage
-oc-warning-button = Use at your own risk
-oc-warning-description =
-    Aggressive overclocking can cause visual artifacts, crashes, or freezes
-
-    Higher voltage can shorten GPU lifespan, even without overheating. Insufficient cooling can damage the hardware
-
-    <a href="https://github.com/ilya-zlobintsev/LACT/wiki/Recovering-from-a-bad-overclock">Recovering from a bad overclock</a>
 advanced-features = Advanced features
 show-all-pstates = All P-States
 enable-gpu-locked-clocks = GPU Locked Clocks

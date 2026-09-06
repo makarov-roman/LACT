@@ -59,6 +59,7 @@ pub enum OcPageMsg {
     },
     PerformanceLevelChanged,
     SetPerformanceLevel(PerformanceLevel),
+    EnablePstateConfig,
     ShowVfCurveEditor,
     VfCurveEditingToggled(bool),
 }
@@ -312,6 +313,10 @@ impl relm4::Component for OcPage {
                     PerformanceFrameMsg::PerformanceLevel(Some(level)),
                 ));
                 APP_BROKER.send(AppMsg::SettingsChanged);
+            }
+            OcPageMsg::EnablePstateConfig => {
+                self.power_states_frame
+                    .emit(PowerStatesFrameMsg::EnableWithManualPerformanceLevel);
             }
             OcPageMsg::ShowVfCurveEditor => {
                 self.vf_curve_editor.emit(VfCurveEditorMsg::Show);
