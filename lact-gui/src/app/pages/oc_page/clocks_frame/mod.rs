@@ -36,26 +36,13 @@ pub struct ClocksFrame {
     enable_vram_locked_clocks: BoolBinding,
 }
 
+#[derive(Default)]
 struct ClocksData {
     current: i32,
     min: i32,
     max: i32,
     custom_title: Option<String>,
     is_secondary: bool,
-    step: i32,
-}
-
-impl Default for ClocksData {
-    fn default() -> Self {
-        Self {
-            current: 0,
-            min: 0,
-            max: 0,
-            custom_title: None,
-            is_secondary: false,
-            step: 10,
-        }
-    }
 }
 
 impl ClocksData {
@@ -675,7 +662,6 @@ impl ClocksFrame {
                     current: voltage_boost.current,
                     min: voltage_boost.min,
                     max: voltage_boost.max,
-                    step: 1,
                     ..Default::default()
                 },
             );
