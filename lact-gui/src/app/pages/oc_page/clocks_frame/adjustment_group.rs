@@ -1,7 +1,16 @@
-use super::adjustment_row::{ClockAdjustmentRow, ClockAdjustmentRowMsg, ClocksData};
-use gtk::prelude::{BoxExt, OrientableExt, WidgetExt};
+use super::{ClocksData, clock_title};
+use crate::{
+    APP_BROKER, I18N,
+    app::{
+        components::adjustment_row::{AdjustmentRow, AdjustmentRowInit, AdjustmentRowMsg},
+        msg::AppMsg,
+    },
+};
+use adw::prelude::*;
+use i18n_embed_fl::fl;
 use lact_schema::request::ClockspeedType;
 use relm4::{css, factory::FactoryHashMap, prelude::FactoryComponent};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClockCategory {
@@ -58,7 +67,8 @@ impl ClockCategory {
 }
 
 pub struct AdjustmentGroup {
-    adjustments: FactoryHashMap<ClockspeedType, ClockAdjustmentRow>,
+    adjustments: FactoryHashMap<ClockspeedType, AdjustmentRow<ClockspeedType>>,
+    secondary_clocks: HashSet<ClockspeedType>,
 }
 
 impl AdjustmentGroup {
@@ -67,18 +77,38 @@ impl AdjustmentGroup {
     }
 
     pub fn has_secondary(&self) -> bool {
-        self.adjustments.values().any(|row| row.is_secondary)
+        !self.secondary_clocks.is_empty()
     }
 
     pub fn set_clock(&mut self, clock_type: ClockspeedType, data: ClocksData) {
-        self.adjustments.insert(clock_type, data);
+        self.adjustments.insert(
+            clock_type,
+            AdjustmentRowInit {
+                title: data.custom_title.unwrap_or_else(|| clock_title(clock_type)),
+                info_text: if clock_type == ClockspeedType::VoltageBoost {
+                    fl!(I18N, "gpu-voltage-boost-tooltip")
+                } else {
+                    String::new()
+                },
+                value: f64::from(data.current),
+                lower: f64::from(data.min),
+                upper: f64::from(data.max),
+                step_increment: get_row_step(clock_type),
+                ..Default::default()
+            },
+        );
+        if data.is_secondary {
+            self.secondary_clocks.insert(clock_type);
+        } else {
+            self.secondary_clocks.remove(&clock_type);
+        }
     }
 
     pub fn add_size_group(&self, label_group: gtk::SizeGroup, input_group: gtk::SizeGroup) {
         for clock_type in self.adjustments.keys() {
             self.adjustments.send(
                 clock_type,
-                ClockAdjustmentRowMsg::AddSizeGroup {
+                AdjustmentRowMsg::AddSizeGroup {
                     label_group: label_group.clone(),
                     input_group: input_group.clone(),
                 },
@@ -89,7 +119,7 @@ impl AdjustmentGroup {
     pub fn set_value_ratio(&self, ratio: f64) {
         for clock_type in self.adjustments.keys() {
             self.adjustments
-                .send(clock_type, ClockAdjustmentRowMsg::ValueRatio(ratio));
+                .send(clock_type, AdjustmentRowMsg::ValueRatio(ratio));
         }
     }
 
@@ -103,7 +133,7 @@ impl AdjustmentGroup {
     ) {
         let mut any_visible = false;
 
-        for (key, row) in self.adjustments.iter() {
+        for key in self.adjustments.keys() {
             let show_current = match key {
                 ClockspeedType::MaxCoreClock | ClockspeedType::MinCoreClock
                     if show_nvidia_options =>
@@ -118,13 +148,13 @@ impl AdjustmentGroup {
                 ClockspeedType::GpuClockOffset(_) if show_nvidia_options && vf_curve_editing => {
                     false
                 }
-                _ => !row.is_secondary || show_secondary,
+                _ => !self.secondary_clocks.contains(key) || show_secondary,
             };
 
             any_visible |= show_current;
 
             self.adjustments
-                .send(key, ClockAdjustmentRowMsg::SetVisible(show_current));
+                .send(key, AdjustmentRowMsg::SetVisible(show_current));
         }
 
         // removes empty card
@@ -134,7 +164,12 @@ impl AdjustmentGroup {
     pub fn get_commands(&self) -> Vec<(ClockspeedType, Option<i32>)> {
         self.adjustments
             .iter()
-            .map(|(clock_type, row)| (*clock_type, row.get_configured_value()))
+            .map(|(clock_type, row)| {
+                (
+                    *clock_type,
+                    row.get_changed_value().map(|value| value as i32),
+                )
+            })
             .collect()
     }
 
@@ -142,7 +177,7 @@ impl AdjustmentGroup {
         for clock_type in self.adjustments.keys() {
             if matches!(clock_type, ClockspeedType::GpuClockOffset(_)) {
                 self.adjustments
-                    .send(clock_type, ClockAdjustmentRowMsg::SetValue(0));
+                    .send(clock_type, AdjustmentRowMsg::SetValue(0.0));
             }
         }
     }
@@ -150,8 +185,20 @@ impl AdjustmentGroup {
     pub fn get_raw_value(&self, clock_type: ClockspeedType) -> i32 {
         self.adjustments
             .get(&clock_type)
-            .map(|row| row.get_raw_value())
+            .map(|row| row.get_value() as i32)
             .unwrap_or(0)
+    }
+}
+
+fn get_row_step(clock_type: ClockspeedType) -> f64 {
+    match ClockCategory::from_type(clock_type) {
+        ClockCategory::CoreClock
+        | ClockCategory::VramClock
+        | ClockCategory::CoreCurveClock
+        | ClockCategory::VramCurveClock => 5.0,
+        ClockCategory::CoreVoltage
+        | ClockCategory::CoreCurveVoltage
+        | ClockCategory::VramCurveVoltage => 1.0,
     }
 }
 
@@ -175,7 +222,10 @@ impl FactoryComponent for AdjustmentGroup {
 
     fn init_model(_: Self::Init, _: &Self::Index, _: relm4::FactorySender<Self>) -> Self {
         Self {
-            adjustments: FactoryHashMap::builder().launch_default().detach(),
+            adjustments: FactoryHashMap::builder()
+                .launch_default()
+                .forward(APP_BROKER.sender(), |()| AppMsg::SettingsChanged),
+            secondary_clocks: HashSet::new(),
         }
     }
 }
