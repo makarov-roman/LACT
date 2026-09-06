@@ -1,12 +1,10 @@
 mod adjustment_group;
-mod adjustment_row;
 
 use crate::{
     APP_BROKER, I18N,
     app::{components::page_section::PageSection, msg::AppMsg, pages::oc_page::OcPageMsg},
 };
 use adjustment_group::{AdjustmentGroup, ClockCategory};
-use adjustment_row::ClocksData;
 use amdgpu_sysfs::gpu_handle::overdrive::ClocksTableGen as AmdClocksTable;
 use gtk::{
     glib::object::ObjectExt,
@@ -36,6 +34,26 @@ pub struct ClocksFrame {
     vf_curve_editing: BoolBinding,
     enable_gpu_locked_clocks: BoolBinding,
     enable_vram_locked_clocks: BoolBinding,
+}
+
+#[derive(Default)]
+struct ClocksData {
+    current: i32,
+    min: i32,
+    max: i32,
+    custom_title: Option<String>,
+    is_secondary: bool,
+}
+
+impl ClocksData {
+    fn new(current: i32, min: i32, max: i32) -> Self {
+        Self {
+            current,
+            min,
+            max,
+            ..Default::default()
+        }
+    }
 }
 
 pub struct ClocksFrameInit {
@@ -110,14 +128,6 @@ impl relm4::Component for ClocksFrame {
                         APP_BROKER.send(AppMsg::ResetClocks);
                     }
                 },
-            },
-
-            append_child = &gtk::Label {
-                set_label: &fl!(I18N, "oc-warning"),
-                set_wrap_mode: pango::WrapMode::Word,
-                set_halign: gtk::Align::Start,
-                add_css_class: css::WARNING,
-                add_css_class: css::DIM_LABEL,
             },
 
             append_child = &gtk::Box {
@@ -644,7 +654,6 @@ impl ClocksFrame {
                     current: voltage_boost.current,
                     min: voltage_boost.min,
                     max: voltage_boost.max,
-                    step: 1,
                     ..Default::default()
                 },
             );
@@ -715,5 +724,33 @@ fn nvidia_clock_offset_to_data(clock_info: &NvidiaClockOffset, is_secondary: boo
         max: clock_info.max,
         is_secondary,
         ..Default::default()
+    }
+}
+
+fn clock_title(clock_type: ClockspeedType) -> String {
+    match clock_type {
+        ClockspeedType::MaxCoreClock => fl!(I18N, "max-gpu-clock"),
+        ClockspeedType::MaxMemoryClock => fl!(I18N, "max-vram-clock"),
+        ClockspeedType::MaxVoltage => fl!(I18N, "max-gpu-voltage"),
+        ClockspeedType::MinCoreClock => fl!(I18N, "min-gpu-clock"),
+        ClockspeedType::MinMemoryClock => fl!(I18N, "min-vram-clock"),
+        ClockspeedType::MinVoltage => fl!(I18N, "min-gpu-voltage"),
+        ClockspeedType::VoltageOffset => fl!(I18N, "gpu-voltage-offset"),
+        ClockspeedType::VoltageBoost => fl!(I18N, "gpu-voltage-boost"),
+        ClockspeedType::GpuClockOffset(pstate) => {
+            fl!(I18N, "gpu-pstate-clock-offset", pstate = pstate)
+        }
+        ClockspeedType::MemClockOffset(pstate) => {
+            fl!(I18N, "vram-pstate-clock-offset", pstate = pstate)
+        }
+        ClockspeedType::GpuVfCurveClock(pstate) => fl!(I18N, "gpu-pstate-clock", pstate = pstate),
+        ClockspeedType::MemVfCurveClock(pstate) => fl!(I18N, "mem-pstate-clock", pstate = pstate),
+        ClockspeedType::GpuVfCurveVoltage(pstate) => {
+            fl!(I18N, "gpu-pstate-clock-voltage", pstate = pstate)
+        }
+        ClockspeedType::MemVfCurveVoltage(pstate) => {
+            fl!(I18N, "mem-pstate-clock-voltage", pstate = pstate)
+        }
+        ClockspeedType::Reset => unreachable!(),
     }
 }
