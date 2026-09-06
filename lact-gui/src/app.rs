@@ -53,7 +53,7 @@ use lact_schema::{
     request::{ConfirmCommand, ProfileBase, SetClocksCommand},
 };
 use msg::AppMsg;
-use page_navigation::{PageNavigation, PageNavigationInit};
+use page_navigation::{PageNavigation, PageNavigationInit, PageNavigationMsg};
 use pages::{
     PageUpdate,
     crash_page::CrashPage,
@@ -284,28 +284,28 @@ impl AsyncComponent for AppModel {
 
                                 #[wrap(Some)]
                                 #[name = "root_stack"]
-                                set_content = model.page_navigation.model().stack.clone() -> gtk::Stack {
-                                            set_vexpand: true,
-                                            set_vhomogeneous: false,
+                                set_content = &model.page_navigation.widgets().stack.clone() -> gtk::Stack {
+                                    set_vexpand: true,
+                                    set_vhomogeneous: false,
 
-                                            add_binding: (&model.ui_sensitive, "sensitive"),
+                                    add_binding: (&model.ui_sensitive, "sensitive"),
 
-                                            add_named[Some("crash_page")] = model.crash_page.widget(),
+                                    add_named[Some("crash_page")] = model.crash_page.widget(),
 
-                                            set_visible_child_name: &CONFIG.read().selected_tab,
-                                            connect_visible_child_name_notify[content_page] => move |stack| {
-                                                if let Some(child) = stack.visible_child() {
-                                                    let page = stack.page(&child);
-                                                    content_page.set_title(&page.title().unwrap_or_default());
+                                    set_visible_child_name: &CONFIG.read().selected_tab,
+                                    connect_visible_child_name_notify[content_page] => move |stack| {
+                                        if let Some(child) = stack.visible_child() {
+                                            let page = stack.page(&child);
+                                            content_page.set_title(&page.title().unwrap_or_default());
 
-                                                    let name = stack.visible_child_name().unwrap().to_string();
-                                                    if name != "crash_page" {
-                                                        CONFIG.write().edit(|config| {
-                                                            config.selected_tab = name;
-                                                        });
-                                                    }
-                                                }
-                                            },
+                                            let name = stack.visible_child_name().unwrap().to_string();
+                                            if name != "crash_page" {
+                                                CONFIG.write().edit(|config| {
+                                                    config.selected_tab = name;
+                                                });
+                                            }
+                                        }
+                                    },
                                 },
                             }
                         }
@@ -949,7 +949,7 @@ impl AppModel {
                 self.reload_profiles(None).await?;
             }
             AppMsg::Crash(message) => {
-                self.page_navigation.model().close_windows();
+                self.page_navigation.emit(PageNavigationMsg::CloseWindows);
                 // we cannot be sure that the application is fully functional after a crash
                 // even though the main loop is restored via crash handler, we want user to restart
                 // this is why navigation controls are disabled

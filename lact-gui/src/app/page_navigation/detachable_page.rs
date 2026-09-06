@@ -110,6 +110,16 @@ impl relm4::Component for DetachablePage {
                 add_top_bar = &adw::HeaderBar {},
             },
         },
+
+        #[local_ref]
+        parent -> adw::ApplicationWindow {
+            connect_close_request[sender, window] => move |_| {
+                // Hide immediately, before the application's main loop can stop.
+                window.set_visible(false);
+                sender.input(DetachablePageMsg::Attach);
+                glib::Propagation::Proceed
+            },
+        },
     }
 
     fn init(
@@ -121,6 +131,7 @@ impl relm4::Component for DetachablePage {
             init,
             detached: false,
         };
+        let parent = &model.init.parent;
         let widgets = view_output!();
         ComponentParts { model, widgets }
     }
@@ -137,6 +148,8 @@ impl relm4::Component for DetachablePage {
                 if !self.detached {
                     root.remove(&widgets.content);
                     widgets.toolbar.set_content(Some(&widgets.content));
+                    // Focusing the first input would scroll the page back to that input.
+                    GtkWindowExt::set_focus(&widgets.window, Some(&widgets.content));
                     self.detached = true;
                 }
                 widgets.window.present();

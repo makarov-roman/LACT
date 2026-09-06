@@ -1,13 +1,16 @@
-use super::CONTENT_MAXIMUM_WIDTH;
+mod detachable_page;
+
+use super::utils::ext::RelmLaunchable;
 use crate::I18N;
 use adw::prelude::*;
-use gtk::glib::{self, clone};
+use detachable_page::{DetachablePage, DetachablePageInit, DetachablePageMsg};
 use i18n_embed_fl::fl;
-use relm4::{ComponentParts, ComponentSender, RelmObjectExt, RelmWidgetExt, binding::BoolBinding};
+use relm4::{
+    ComponentController, ComponentParts, ComponentSender, RelmWidgetExt, binding::BoolBinding,
+};
 
 pub struct PageNavigation {
-    pub stack: gtk::Stack,
-    pages: Vec<Page>,
+    pages: Vec<relm4::Controller<DetachablePage>>,
 }
 
 pub struct PageNavigationInit {
@@ -19,27 +22,21 @@ pub struct PageNavigationInit {
 #[derive(Debug)]
 pub enum PageNavigationMsg {
     Select(usize),
-    Detach(usize),
-    Attach(usize),
-}
-
-struct Page {
-    name: &'static str,
-    host: gtk::Box,
-    content: gtk::ScrolledWindow,
-    placeholder: gtk::Box,
-    window: adw::Window,
-    toolbar: adw::ToolbarView,
+    SyncSelection,
+    CloseWindows,
 }
 
 #[relm4::component(pub)]
-impl relm4::SimpleComponent for PageNavigation {
+impl relm4::Component for PageNavigation {
     type Init = PageNavigationInit;
     type Input = PageNavigationMsg;
     type Output = ();
+    type CommandOutput = ();
 
     view! {
+        #[root]
         gtk::ListBox {
+            update_property: &[gtk::accessible::Property::Label(&fl!(I18N, "sidebar"))],
             add_css_class: "navigation-sidebar",
             set_margin_vertical: 1,
             set_vexpand: true,
@@ -47,8 +44,14 @@ impl relm4::SimpleComponent for PageNavigation {
                 if let Some(row) = row {
                     sender.input(PageNavigationMsg::Select(row.index() as usize));
                 }
-            },
-        }
+            } @ selection_signal,
+        },
+
+        #[name = "stack"]
+        gtk::Stack {
+            set_vhomogeneous: false,
+            connect_visible_child_name_notify => PageNavigationMsg::SyncSelection,
+        },
     }
 
     fn init(
@@ -56,162 +59,64 @@ impl relm4::SimpleComponent for PageNavigation {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let stack = gtk::Stack::builder().vhomogeneous(false).build();
-        let mut pages = Vec::new();
+        let pages = init
+            .pages
+            .into_iter()
+            .map(|(name, title, content)| {
+                DetachablePage::detach(DetachablePageInit {
+                    name,
+                    title,
+                    content,
+                    parent: init.parent.clone(),
+                    sensitive: init.sensitive.clone(),
+                })
+            })
+            .collect();
+        let model = Self { pages };
+        let widgets = view_output!();
 
-        for (index, (name, title, widget)) in init.pages.into_iter().enumerate() {
-            let host = gtk::Box::new(gtk::Orientation::Vertical, 0);
-            let clamp = adw::Clamp::builder()
-                .maximum_size(CONTENT_MAXIMUM_WIDTH)
-                .tightening_threshold(CONTENT_MAXIMUM_WIDTH)
-                .child(&widget)
-                .build();
-            let content = gtk::ScrolledWindow::builder()
-                .hscrollbar_policy(gtk::PolicyType::Never)
-                .vexpand(true)
-                .child(&clamp)
-                .build();
-            content.add_binding(&init.sensitive, "sensitive");
-            host.append(&content);
-
-            let toolbar = adw::ToolbarView::new();
-            toolbar.add_top_bar(&adw::HeaderBar::new());
-            let window = adw::Window::builder()
-                .title(&title)
-                .default_width(900)
-                .default_height(750)
-                .transient_for(&init.parent)
-                .destroy_with_parent(true)
-                .content(&toolbar)
-                .build();
-            window.connect_close_request(clone!(
-                #[strong]
-                sender,
-                move |_| {
-                    sender.input(PageNavigationMsg::Attach(index));
-                    glib::Propagation::Stop
-                }
-            ));
-
-            relm4::view! {
-                #[name = "placeholder"]
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_spacing: 12,
-                    set_margin_all: 24,
-                    set_align: gtk::Align::Center,
-                    set_vexpand: true,
-                    set_visible: false,
-
-                    gtk::Label {
-                        set_label: &fl!(I18N, "page-detached"),
-                    },
-                    gtk::Button {
-                        set_label: &fl!(I18N, "show-page-window"),
-                        connect_clicked[sender] => move |_| {
-                            sender.input(PageNavigationMsg::Detach(index));
-                        },
-                    },
-                    gtk::Button {
-                        set_label: &fl!(I18N, "reattach-page"),
-                        connect_clicked[sender] => move |_| {
-                            sender.input(PageNavigationMsg::Attach(index));
-                        },
-                    },
-                },
-                #[name = "row"]
-                gtk::Box {
-                    set_spacing: 6,
-                    gtk::Label {
-                        set_label: &title,
-                        set_halign: gtk::Align::Start,
-                        set_hexpand: true,
-                    },
-                    gtk::Button {
-                        set_icon_name: "window-new-symbolic",
-                        set_tooltip_text: Some(&fl!(I18N, "detach-page", page = title.as_str())),
-                        add_css_class: "flat",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(PageNavigationMsg::Detach(index));
-                        },
-                    },
-                },
-            }
-            host.append(&placeholder);
-            stack.add_titled(&host, Some(name), &title);
-            root.append(&row);
-            pages.push(Page {
-                name,
-                host,
-                content,
-                placeholder,
-                window,
-                toolbar,
-            });
+        for page in &model.pages {
+            root.append(&page.widgets().row);
+            widgets.stack.add_titled(
+                page.widget(),
+                Some(page.model().init.name),
+                &page.model().init.title,
+            );
         }
 
-        let names: Vec<_> = pages.iter().map(|page| page.name).collect();
-        stack.connect_visible_child_name_notify(clone!(
-            #[weak]
-            root,
-            move |stack| {
-                let index = names
-                    .iter()
-                    .position(|name| Some(*name) == stack.visible_child_name().as_deref());
+        ComponentParts { model, widgets }
+    }
+
+    fn update_with_view(
+        &mut self,
+        widgets: &mut Self::Widgets,
+        msg: Self::Input,
+        _sender: ComponentSender<Self>,
+        root: &Self::Root,
+    ) {
+        match msg {
+            PageNavigationMsg::Select(index) => {
+                widgets
+                    .stack
+                    .set_visible_child_name(self.pages[index].model().init.name);
+            }
+            PageNavigationMsg::SyncSelection => {
+                let index = self.pages.iter().position(|page| {
+                    Some(page.model().init.name) == widgets.stack.visible_child_name().as_deref()
+                });
+                root.block_signal(&widgets.selection_signal);
                 root.select_row(
                     index
                         .and_then(|index| root.row_at_index(index as i32))
                         .as_ref(),
                 );
+                root.unblock_signal(&widgets.selection_signal);
             }
-        ));
-
-        let model = Self { stack, pages };
-        let widgets = view_output!();
-        ComponentParts { model, widgets }
-    }
-
-    fn update(&mut self, msg: Self::Input, _sender: ComponentSender<Self>, _root: &Self::Root) {
-        match msg {
-            PageNavigationMsg::Select(index) => {
-                self.stack.set_visible_child_name(self.pages[index].name);
+            PageNavigationMsg::CloseWindows => {
+                for page in &self.pages {
+                    page.emit(DetachablePageMsg::Attach);
+                }
             }
-            PageNavigationMsg::Detach(index) => self.pages[index].detach(),
-            PageNavigationMsg::Attach(index) => self.pages[index].attach(),
         }
-    }
-
-    fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
-        for page in &self.pages {
-            page.window.destroy();
-        }
-    }
-}
-
-impl PageNavigation {
-    pub fn close_windows(&self) {
-        for page in &self.pages {
-            page.attach();
-        }
-    }
-}
-
-impl Page {
-    fn detach(&self) {
-        if self.toolbar.content().is_none() {
-            self.host.remove(&self.content);
-            self.toolbar.set_content(Some(&self.content));
-            self.placeholder.set_visible(true);
-        }
-        self.window.present();
-    }
-
-    fn attach(&self) {
-        if self.toolbar.content().is_some() {
-            self.toolbar.set_content(gtk::Widget::NONE);
-            self.host.append(&self.content);
-            self.placeholder.set_visible(false);
-        }
-        self.window.set_visible(false);
     }
 }
