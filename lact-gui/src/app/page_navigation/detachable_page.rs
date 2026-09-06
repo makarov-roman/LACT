@@ -77,6 +77,7 @@ impl relm4::Component for DetachablePage {
             #[wrap(Some)]
             set_child = &gtk::Box {
                 set_spacing: 6,
+                set_margin_vertical: 6,
                 gtk::Label {
                     set_label: &model.init.title,
                     set_halign: gtk::Align::Start,
@@ -86,6 +87,7 @@ impl relm4::Component for DetachablePage {
                     set_icon_name: "window-new-symbolic",
                     set_tooltip_text: Some(&fl!(I18N, "detach-page", page = model.init.title.as_str())),
                     add_css_class: "flat",
+                    add_css_class: "page-detach-button",
                     connect_clicked => DetachablePageMsg::Detach,
                 },
             },
