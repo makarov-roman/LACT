@@ -670,6 +670,9 @@ impl AppModel {
             AppMsg::ShowPreferencesDialog => {
                 self.preferences_dialog.emit(PreferencesDialogMsg::Show);
             }
+            AppMsg::ExperimentalFeaturesChanged => {
+                self.oc_page.emit(OcPageMsg::ExperimentalFeaturesChanged);
+            }
             AppMsg::ShowAboutDialog => {
                 self.about_dialog.emit(AboutDialogMsg::Show);
             }
