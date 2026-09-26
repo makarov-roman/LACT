@@ -1152,6 +1152,24 @@ impl AppModel {
             .ok()
             .flatten();
 
+        if self.device_driver == "nvidia"
+            && !CONFIG.read().experimental_nvidia_pstate_offsets
+            && gpu_config.as_ref().is_some_and(|config| {
+                let clocks = &config.clocks_configuration;
+                clocks
+                    .gpu_clock_offsets
+                    .keys()
+                    .chain(clocks.mem_clock_offsets.keys())
+                    .any(|pstate| *pstate > 0)
+            })
+        {
+            CONFIG
+                .write()
+                .edit(|config| config.experimental_nvidia_pstate_offsets = true);
+            self.preferences_dialog
+                .emit(PreferencesDialogMsg::ExperimentalFeaturesChanged);
+        }
+
         let stats = self
             .daemon_client
             .get_device_stats(&gpu_id)

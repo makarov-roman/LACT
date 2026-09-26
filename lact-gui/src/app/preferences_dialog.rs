@@ -34,6 +34,7 @@ pub enum PreferencesDialogMsg {
     ThemeSelected(AppTheme),
     ColorSchemeSelected(AppColorScheme),
     LanguageSelected(u32),
+    ExperimentalFeaturesChanged,
 }
 
 #[relm4::component(pub)]
@@ -178,13 +179,15 @@ impl relm4::Component for PreferencesDialog {
                     adw::SwitchRow {
                         set_title: &fl!(I18N, "nvidia-pstate-offsets"),
                         set_subtitle: &fl!(I18N, "nvidia-pstate-offsets-description"),
+                        #[watch]
+                        #[block_signal(pstate_offsets_handler)]
                         set_active: CONFIG.read().experimental_nvidia_pstate_offsets,
                         connect_active_notify => move |row| {
                             CONFIG.write().edit(|config| {
                                 config.experimental_nvidia_pstate_offsets = row.is_active();
                             });
                             APP_BROKER.send(AppMsg::ExperimentalFeaturesChanged);
-                        },
+                        } @ pstate_offsets_handler,
                     },
                 },
 
@@ -245,6 +248,7 @@ impl relm4::Component for PreferencesDialog {
         root: &Self::Root,
     ) {
         match msg {
+            PreferencesDialogMsg::ExperimentalFeaturesChanged => {}
             PreferencesDialogMsg::LanguageSelected(index) => {
                 let language = if index == 0 {
                     None
