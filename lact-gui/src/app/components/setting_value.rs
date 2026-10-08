@@ -1,7 +1,6 @@
 use relm4::binding::{Binding, BoolBinding};
 use std::{cell::RefCell, rc::Rc};
 
-/// A setting's value and edit state, independent of its widget representation.
 #[derive(Clone, Debug)]
 pub struct SettingValue<T> {
     value: Rc<RefCell<Option<T>>>,
@@ -21,41 +20,36 @@ impl<T: Clone + PartialEq> SettingValue<T> {
         }
     }
 
-    pub fn value(&self) -> Option<T> {
-        self.value.borrow().clone()
+    /// Sets the value and clears the edit state.
+    pub fn set_initial_value(&self, value: Option<T>) {
+        self.update_state(value, false);
     }
 
-    pub fn default_value(&self) -> Option<T> {
-        self.default_value.borrow().clone()
-    }
-
-    pub fn load(&self, value: Option<T>) {
-        self.update(value, false);
-    }
-
-    pub fn edit(&self, value: Option<T>) {
-        self.update(value, true);
+    /// Sets the value and marks it as edited.
+    pub fn set_value(&self, value: Option<T>) {
+        self.update_state(value, true);
     }
 
     pub fn reset(&self) {
-        self.edit(self.default_value());
+        let default_value = self.default_value.borrow().clone();
+        self.set_value(default_value);
     }
 
-    pub fn set_default_value(&self, value: Option<T>) {
-        *self.default_value.borrow_mut() = value;
-        self.is_default.set(self.value() == self.default_value());
-    }
-
-    fn update(&self, value: Option<T>, changed: bool) {
+    fn update_state(&self, value: Option<T>, mark_changed: bool) {
+        let is_default = value == *self.default_value.borrow();
         *self.value.borrow_mut() = value;
-        self.is_default.set(self.value() == self.default_value());
-        self.is_changed.set(changed);
+        self.is_default.set(is_default);
+        self.is_changed.set(mark_changed);
+    }
+
+    pub fn get_value(&self) -> Option<T> {
+        self.value.borrow().clone()
     }
 
     /// The outer `None` means no edit. Default values remain explicit values;
     /// callers decide how to represent them in configuration.
     pub fn get_changed_value(&self) -> Option<Option<T>> {
-        self.is_changed.get().then(|| self.value())
+        self.is_changed.get().then(|| self.get_value())
     }
 }
 
@@ -75,16 +69,16 @@ mod tests {
         assert_eq!(value.get_changed_value(), None);
 
         let shared = value.clone();
-        shared.edit(Some(25.0));
+        shared.set_value(Some(25.0));
         assert!(notified.get());
         assert_eq!(value.get_changed_value(), Some(Some(25.0)));
-        value.edit(Some(50.0));
+        value.set_value(Some(50.0));
         assert_eq!(value.get_changed_value(), Some(Some(50.0)));
 
         value.reset();
         assert!(value.is_default.get());
         assert_eq!(value.get_changed_value(), Some(Some(0.0)));
-        value.load(Some(0.0));
+        value.set_initial_value(Some(0.0));
         assert!(!notified.get());
         assert!(value.is_default.get());
         assert_eq!(value.get_changed_value(), None);
@@ -94,18 +88,17 @@ mod tests {
     fn tracks_unknown_defaults_and_non_numeric_values() {
         let unknown = SettingValue::new(Some(2000), None);
         unknown.reset();
-        assert_eq!(unknown.value(), None);
+        assert_eq!(unknown.get_value(), None);
         assert!(unknown.is_default.get());
         assert_eq!(unknown.get_changed_value(), Some(None));
-        unknown.edit(Some(2000));
+        unknown.set_value(Some(2000));
         assert!(!unknown.is_default.get());
 
         let boolean = SettingValue::new(Some(true), Some(false));
         boolean.reset();
         assert_eq!(boolean.get_changed_value(), Some(Some(false)));
 
-        let text = SettingValue::new(Some(String::from("a")), None);
-        text.set_default_value(Some(String::from("a")));
+        let text = SettingValue::new(Some(String::from("a")), Some(String::from("a")));
         assert!(text.is_default.get());
         assert!(!text.is_changed.get());
         assert_eq!(text.get_changed_value(), None);

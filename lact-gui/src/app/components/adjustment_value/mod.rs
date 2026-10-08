@@ -31,7 +31,7 @@ impl AdjustmentValue {
         let setting = SettingValue::new(Some(adjustment.value()), None);
         adjustment.connect_value_changed({
             let setting = setting.clone();
-            move |adjustment| setting.edit(Some(adjustment.value()))
+            move |adjustment| setting.set_value(Some(adjustment.value()))
         });
 
         Self {
@@ -58,6 +58,7 @@ impl AdjustmentValue {
         self.adjustment.set_value(value);
         // Keep the refresh notification even when the numeric value is unchanged.
         self.adjustment.emit_by_name::<()>("value_changed", &[]);
-        self.setting.load(Some(self.adjustment.value()));
+        self.setting
+            .set_initial_value(Some(self.adjustment.value()));
     }
 }
