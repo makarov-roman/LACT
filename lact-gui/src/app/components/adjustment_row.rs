@@ -131,7 +131,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
 
                     #[name = "spinbutton"]
                     gtk::SpinButton {
-                        set_adjustment: &self.adjustment,
+                        set_adjustment: &*self.adjustment,
                         set_valign: gtk::Align::Center,
                         add_controller = make_event_controller_no_scroll(),
                         connect_changed[sender] => move |_| {
@@ -152,7 +152,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
 
                     #[name = "scale"]
                     gtk::Scale {
-                        set_adjustment: &self.adjustment,
+                        set_adjustment: &*self.adjustment,
                         set_orientation: gtk::Orientation::Horizontal,
                         set_hexpand: true,
                         set_digits: 0,
@@ -173,7 +173,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
         },
 
         #[local_ref]
-        adjustment -> AdjustmentValue {
+        adjustment -> gtk::Adjustment {
             connect_value_changed[sender] => move |_| {
                 let _ = sender.output(());
             } @ value_change_signal,
@@ -206,7 +206,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
         _returned_widget: &gtk::ListBoxRow,
         sender: FactorySender<Self>,
     ) -> Self::Widgets {
-        let adjustment = &self.adjustment;
+        let adjustment = &*self.adjustment;
         let widgets = view_output!();
 
         widgets
@@ -291,5 +291,92 @@ impl<Key> AdjustmentRow<Key> {
         self.adjustment
             .get_changed_value(false)
             .map(|value| value / self.value_ratio)
+    }
+}
+
+#[cfg(all(test, feature = "gtk-tests"))]
+mod tests {
+    use super::*;
+    use relm4::factory::FactoryHashMap;
+
+    #[test]
+    #[ignore = "requires a GTK display; run explicitly with --ignored"]
+    fn preserves_numeric_edit_and_unit_change_behavior() {
+        gtk::init().unwrap();
+        let context = gtk::glib::MainContext::default();
+        let _guard = context.acquire().unwrap();
+        let drain = || {
+            while context.pending() {
+                context.iteration(false);
+            }
+        };
+        let mut rows = FactoryHashMap::<(), AdjustmentRow<()>>::builder()
+            .launch_default()
+            .detach();
+        rows.insert(
+            (),
+            AdjustmentRowInit {
+                value: 250.0,
+                upper: 200.0,
+                ..Default::default()
+            },
+        );
+        drain();
+        assert_eq!(rows[&()].get_value(), 200.0);
+        assert_eq!(rows[&()].get_changed_value(), None);
+
+        // Setting the same value remains a no-op; subsequent edits stay dirty.
+        rows.send(&(), AdjustmentRowMsg::SetValue(200.0));
+        drain();
+        assert_eq!(rows[&()].get_changed_value(), None);
+        rows.send(&(), AdjustmentRowMsg::SetValue(100.0));
+        drain();
+        assert_eq!(rows[&()].get_changed_value(), Some(100.0));
+        rows.send(&(), AdjustmentRowMsg::SetValue(150.0));
+        drain();
+        assert_eq!(rows[&()].get_changed_value(), Some(150.0));
+
+        // Text edits notify the parent but only GTK's commit updates the value.
+        let spin = find_spinbutton(rows.widget().upcast_ref()).unwrap();
+        spin.set_text("175");
+        drain();
+        assert_eq!(rows[&()].get_changed_value(), Some(150.0));
+        spin.update();
+        drain();
+        assert_eq!(rows[&()].get_changed_value(), Some(175.0));
+
+        // The existing unit-change API clears dirty state without changing raw units.
+        rows.send(&(), AdjustmentRowMsg::ValueRatio(2.0));
+        drain();
+        assert_eq!(spin.value(), 350.0);
+        assert_eq!(rows[&()].get_value(), 175.0);
+        assert_eq!(rows[&()].get_changed_value(), None);
+
+        // Numeric resets still produce an explicit value, including zero.
+        rows.send(&(), AdjustmentRowMsg::SetValue(0.0));
+        drain();
+        assert_eq!(rows[&()].get_changed_value(), Some(0.0));
+        assert_eq!(rows[&()].adjustment.get_changed_value(true), None);
+
+        // Clones share the same GTK value and edit state.
+        let adjustment = rows[&()].adjustment.clone();
+        adjustment.set_value(100.0);
+        assert_eq!(rows[&()].get_changed_value(), Some(50.0));
+        adjustment.set_initial_value(100.0);
+        assert_eq!(rows[&()].get_changed_value(), None);
+    }
+
+    fn find_spinbutton(widget: &gtk::Widget) -> Option<gtk::SpinButton> {
+        if let Ok(spin) = widget.clone().downcast::<gtk::SpinButton>() {
+            return Some(spin);
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if let Some(spin) = find_spinbutton(&widget) {
+                return Some(spin);
+            }
+            child = widget.next_sibling();
+        }
+        None
     }
 }
