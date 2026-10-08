@@ -1,4 +1,4 @@
-use super::adjustment_value::AdjustmentValue;
+use super::{adjustment_value::AdjustmentValue, setting_value::SettingValue};
 use crate::app::utils::ext::make_event_controller_no_scroll;
 use crate::app::utils::formatting::fmt_value_with_unit;
 use adw::prelude::*;
@@ -12,7 +12,6 @@ pub struct AdjustmentRow<Key> {
     unit: String,
     _key: PhantomData<Key>,
     adjustment: AdjustmentValue,
-    value_ratio: f64,
     size_group_widgets: Vec<(gtk::SizeGroup, gtk::Widget)>,
 }
 
@@ -22,6 +21,7 @@ pub struct AdjustmentRowInit {
     pub info_text: String,
     pub unit: String,
     pub value: f64,
+    pub default_value: Option<f64>,
     pub lower: f64,
     pub upper: f64,
     pub step_increment: f64,
@@ -36,6 +36,7 @@ impl Default for AdjustmentRowInit {
             info_text: String::new(),
             unit: String::new(),
             value: 0.0,
+            default_value: None,
             lower: 0.0,
             upper: 0.0,
             step_increment: 1.0,
@@ -48,8 +49,8 @@ impl Default for AdjustmentRowInit {
 pub enum AdjustmentRowMsg {
     /// Change display units and reset the edit state.
     ValueRatio(f64),
-    /// Set a value as an edit, for example when the user presses Reset.
-    SetValue(f64),
+    /// Restore the stored default as an edit.
+    Reset,
     SetVisible(bool),
     AddSizeGroup {
         label_group: gtk::SizeGroup,
@@ -189,12 +190,12 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
             _key: PhantomData,
             adjustment: AdjustmentValue::new(
                 init.value,
+                init.default_value,
                 init.lower,
                 init.upper,
                 init.step_increment,
                 init.page_increment,
             ),
-            value_ratio: 1.0,
             size_group_widgets: Vec::new(),
         }
     }
@@ -224,15 +225,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
                 self.adjustment.block_signal(&widgets.value_change_signal);
                 widgets.spinbutton.block_signal(&widgets.text_change_signal);
 
-                let raw_current = self.adjustment.value() / self.value_ratio;
-                let raw_min = self.adjustment.lower() / self.value_ratio;
-                let raw_max = self.adjustment.upper() / self.value_ratio;
-
-                self.adjustment.set_lower(raw_min * ratio);
-                self.adjustment.set_upper(raw_max * ratio);
-                self.adjustment.set_initial_value(raw_current * ratio);
-
-                self.value_ratio = ratio;
+                self.adjustment.set_value_ratio(ratio);
                 widgets
                     .lower_label
                     .set_label(&fmt_value_with_unit(self.adjustment.lower(), &self.unit));
@@ -245,8 +238,8 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
                     .unblock_signal(&widgets.text_change_signal);
                 self.adjustment.unblock_signal(&widgets.value_change_signal);
             }
-            AdjustmentRowMsg::SetValue(value) => {
-                self.adjustment.set_value(value * self.value_ratio);
+            AdjustmentRowMsg::Reset => {
+                self.adjustment.reset();
             }
             AdjustmentRowMsg::SetVisible(visible) => {
                 if widgets.root_row.get_visible() != visible {
@@ -284,20 +277,20 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
 
 impl<Key> AdjustmentRow<Key> {
     pub fn get_value(&self) -> f64 {
-        self.adjustment.value() / self.value_ratio
+        self.adjustment.get_value()
     }
 
     pub fn get_changed_value(&self) -> Option<f64> {
-        self.adjustment
-            .get_changed_value(false)
-            .map(|value| value / self.value_ratio)
+        self.adjustment.get_changed_value()
     }
 }
 
 #[cfg(all(test, feature = "gtk-tests"))]
 mod tests {
     use super::*;
+    use relm4::binding::Binding;
     use relm4::factory::FactoryHashMap;
+    use std::{cell::Cell, rc::Rc};
 
     #[test]
     #[ignore = "requires a GTK display; run explicitly with --ignored"]
@@ -317,6 +310,7 @@ mod tests {
             (),
             AdjustmentRowInit {
                 value: 250.0,
+                default_value: Some(25.0),
                 upper: 200.0,
                 ..Default::default()
             },
@@ -324,20 +318,29 @@ mod tests {
         drain();
         assert_eq!(rows[&()].get_value(), 200.0);
         assert_eq!(rows[&()].get_changed_value(), None);
+        let notified = Rc::new(Cell::new(false));
+        rows[&()].adjustment.is_changed().connect_value_notify({
+            let notified = notified.clone();
+            move |binding| notified.set(binding.get())
+        });
 
         // Setting the same value remains a no-op; subsequent edits stay dirty.
-        rows.send(&(), AdjustmentRowMsg::SetValue(200.0));
+        rows[&()].adjustment.set_value(200.0);
         drain();
         assert_eq!(rows[&()].get_changed_value(), None);
-        rows.send(&(), AdjustmentRowMsg::SetValue(100.0));
+        rows[&()].adjustment.set_value(100.0);
         drain();
         assert_eq!(rows[&()].get_changed_value(), Some(100.0));
-        rows.send(&(), AdjustmentRowMsg::SetValue(150.0));
+        assert!(notified.get());
+        rows[&()].adjustment.set_value(200.0);
+        drain();
+        assert_eq!(rows[&()].get_changed_value(), Some(200.0));
+        rows[&()].adjustment.set_value(150.0);
         drain();
         assert_eq!(rows[&()].get_changed_value(), Some(150.0));
 
         // Text edits notify the parent but only GTK's commit updates the value.
-        let spin = find_spinbutton(rows.widget().upcast_ref()).unwrap();
+        let spin = find_widget::<gtk::SpinButton>(rows.widget().upcast_ref()).unwrap();
         spin.set_text("175");
         drain();
         assert_eq!(rows[&()].get_changed_value(), Some(150.0));
@@ -351,29 +354,60 @@ mod tests {
         assert_eq!(spin.value(), 350.0);
         assert_eq!(rows[&()].get_value(), 175.0);
         assert_eq!(rows[&()].get_changed_value(), None);
+        assert!(!notified.get());
 
-        // Numeric resets still produce an explicit value, including zero.
-        rows.send(&(), AdjustmentRowMsg::SetValue(0.0));
+        // Reset updates both widgets in display units and returns raw units for Apply.
+        rows.send(&(), AdjustmentRowMsg::Reset);
         drain();
-        assert_eq!(rows[&()].get_changed_value(), Some(0.0));
-        assert_eq!(rows[&()].adjustment.get_changed_value(true), None);
+        let scale = find_widget::<gtk::Scale>(rows.widget().upcast_ref()).unwrap();
+        assert_eq!(spin.value(), 50.0);
+        assert_eq!(scale.value(), 50.0);
+        assert_eq!(rows[&()].get_changed_value(), Some(25.0));
+        assert!(rows[&()].adjustment.is_default().get());
+        assert!(notified.get());
 
         // Clones share the same GTK value and edit state.
         let adjustment = rows[&()].adjustment.clone();
-        adjustment.set_value(100.0);
+        adjustment.set_value(50.0);
         assert_eq!(rows[&()].get_changed_value(), Some(50.0));
-        adjustment.set_initial_value(100.0);
+        assert!(!adjustment.is_default().get());
+        adjustment.set_initial_value(25.0);
         assert_eq!(rows[&()].get_changed_value(), None);
+        assert!(adjustment.is_default().get());
+        assert_eq!(spin.value(), 50.0);
+        assert!(!notified.get());
+
+        // Resetting an already-default value does not create an edit.
+        rows.send(&(), AdjustmentRowMsg::Reset);
+        drain();
+        assert_eq!(rows[&()].get_changed_value(), None);
+
+        // GTK edits also update the trait's raw value and state, with clamping.
+        spin.set_value(1000.0);
+        assert_eq!(adjustment.get_value(), 200.0);
+        assert_eq!(adjustment.get_changed_value(), Some(200.0));
+        assert!(!adjustment.is_default().get());
+
+        let zero_default = AdjustmentValue::new(50.0, Some(0.0), 0.0, 200.0, 1.0, 10.0);
+        zero_default.reset();
+        assert_eq!(zero_default.get_changed_value(), Some(0.0));
+        assert!(zero_default.is_default().get());
+
+        let unknown_default = AdjustmentValue::new(50.0, None, 0.0, 200.0, 1.0, 10.0);
+        unknown_default.reset();
+        assert_eq!(unknown_default.get_value(), 50.0);
+        assert_eq!(unknown_default.get_changed_value(), None);
+        assert!(!unknown_default.is_default().get());
     }
 
-    fn find_spinbutton(widget: &gtk::Widget) -> Option<gtk::SpinButton> {
-        if let Ok(spin) = widget.clone().downcast::<gtk::SpinButton>() {
-            return Some(spin);
+    fn find_widget<W: IsA<gtk::Widget>>(widget: &gtk::Widget) -> Option<W> {
+        if let Ok(widget) = widget.clone().downcast::<W>() {
+            return Some(widget);
         }
         let mut child = widget.first_child();
         while let Some(widget) = child {
-            if let Some(spin) = find_spinbutton(&widget) {
-                return Some(spin);
+            if let Some(widget) = find_widget(&widget) {
+                return Some(widget);
             }
             child = widget.next_sibling();
         }

@@ -392,8 +392,7 @@ impl relm4::Component for ClocksFrame {
             ClocksFrameMsg::ResetGpuClockOffsets => {
                 for clock_type in self.adjustments.keys() {
                     if matches!(clock_type, ClockspeedType::GpuClockOffset(_)) {
-                        self.adjustments
-                            .send(clock_type, AdjustmentRowMsg::SetValue(0.0));
+                        self.adjustments.send(clock_type, AdjustmentRowMsg::Reset);
                     }
                 }
             }
@@ -480,6 +479,8 @@ impl ClocksFrame {
                     String::new()
                 },
                 value: f64::from(data.current),
+                default_value: matches!(clock_type, ClockspeedType::GpuClockOffset(_))
+                    .then_some(0.0),
                 lower: f64::from(data.min),
                 upper: f64::from(data.max),
                 step_increment: get_row_step(clock_type),

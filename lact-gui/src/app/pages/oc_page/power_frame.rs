@@ -24,7 +24,6 @@ use relm4::{
 };
 
 pub struct PowerFrame {
-    power: PowerStats,
     power_row: FactoryHashMap<(), AdjustmentRow<()>>,
     performance_frame: relm4::Controller<PerformanceFrame>,
 }
@@ -74,7 +73,6 @@ impl relm4::Component for PowerFrame {
     ) -> ComponentParts<Self> {
         let card = AdjustmentCard::init(());
         let model = Self {
-            power: PowerStats::default(),
             power_row: FactoryHashMap::builder()
                 .launch(card.content.clone())
                 .forward(APP_BROKER.sender(), |()| AppMsg::SettingsChanged),
@@ -121,14 +119,13 @@ impl relm4::Component for PowerFrame {
                             title: fl!(I18N, "power-cap"),
                             unit: fl!(I18N, "watt"),
                             value,
+                            default_value: Some(power.cap_default.unwrap_or_default()),
                             lower: power.cap_min.unwrap_or_default(),
                             upper: power.cap_max.unwrap_or_default(),
                             ..Default::default()
                         },
                     );
                 }
-
-                self.power = power;
             }
             PowerFrameMsg::Performance(msg) => {
                 self.performance_frame.emit(msg);
@@ -136,10 +133,7 @@ impl relm4::Component for PowerFrame {
             PowerFrameMsg::RefreshVisibility => (),
             PowerFrameMsg::Reset => {
                 if !self.power_row.is_empty() {
-                    self.power_row.send(
-                        &(),
-                        AdjustmentRowMsg::SetValue(self.power.cap_default.unwrap_or_default()),
-                    );
+                    self.power_row.send(&(), AdjustmentRowMsg::Reset);
                 }
             }
         }

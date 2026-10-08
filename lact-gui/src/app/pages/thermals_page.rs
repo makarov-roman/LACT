@@ -389,19 +389,22 @@ impl relm4::Component for ThermalsPage {
                                 );
                             }
                         }
-                        for (rows, title, info) in [
+                        for (rows, title, info, default_value) in [
                             (
                                 &mut self.nvidia_target_temperature,
                                 fl!(I18N, "target-temp"),
                                 stats.nvidia_thermal_info.target_temp,
+                                stats.nvidia_thermal_info.target_temp_default.map(f64::from),
                             ),
                             (
                                 &mut self.zero_rpm_temperature,
                                 fl!(I18N, "zero-rpm-stop-temp"),
                                 info.zero_rpm_temperature,
+                                None,
                             ),
                         ] {
-                            if let Some(init) = fan_info_init(title, info) {
+                            if let Some(mut init) = fan_info_init(title, info) {
+                                init.default_value = default_value;
                                 rows.insert((), init);
                                 rows.send(
                                     &(),
@@ -428,10 +431,10 @@ impl relm4::Component for ThermalsPage {
                 APP_BROKER.send(AppMsg::SettingsChanged);
             }
             ThermalsPageMsg::RestNvidiaOptions => {
-                if let Some(default) = self.target_temperature_default {
+                if self.target_temperature_default.is_some() {
                     if !self.nvidia_target_temperature.is_empty() {
                         self.nvidia_target_temperature
-                            .send(&(), AdjustmentRowMsg::SetValue(default as f64));
+                            .send(&(), AdjustmentRowMsg::Reset);
                     }
                 } else {
                     APP_BROKER.send(AppMsg::Error(Arc::new(anyhow!(

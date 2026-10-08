@@ -306,6 +306,7 @@ impl relm4::Component for FanCurveFrame {
                         AdjustmentRowInit {
                             title: glib::markup_escape_text(&fl!(I18N, "spindown-delay")).into(),
                             value: msg.spindown_delay.unwrap_or(DEFAULT_SPINDOWN_DELAY_MS) as f64,
+                            default_value: Some(DEFAULT_SPINDOWN_DELAY_MS as f64),
                             upper: 30_000.0,
                             step_increment: 10.0,
                             page_increment: 10.0,
@@ -319,6 +320,7 @@ impl relm4::Component for FanCurveFrame {
                             title: glib::markup_escape_text(&fl!(I18N, "speed-change-threshold"))
                                 .into(),
                             value: msg.change_threshold.unwrap_or(DEFAULT_CHANGE_THRESHOLD) as f64,
+                            default_value: Some(DEFAULT_CHANGE_THRESHOLD as f64),
                             upper: 10.0,
                             page_increment: 1.0,
                             ..Default::default()
@@ -403,13 +405,9 @@ impl relm4::Component for FanCurveFrame {
                     },
                     widgets,
                 );
-                for (setting, value) in [
-                    (CurveSetting::SpindownDelay, DEFAULT_SPINDOWN_DELAY_MS),
-                    (CurveSetting::ChangeThreshold, DEFAULT_CHANGE_THRESHOLD),
-                ] {
+                for setting in [CurveSetting::SpindownDelay, CurveSetting::ChangeThreshold] {
                     if self.adjustments.get(&setting).is_some() {
-                        self.adjustments
-                            .send(&setting, AdjustmentRowMsg::SetValue(value as f64));
+                        self.adjustments.send(&setting, AdjustmentRowMsg::Reset);
                     }
                 }
             }
