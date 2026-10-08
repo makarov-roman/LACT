@@ -143,6 +143,10 @@ impl ClocksConfiguration {
                 *self = ClocksConfiguration::default();
             }
         }
+        self.gpu_vf_curve
+            .retain(|_, point| point.clockspeed.is_some() || point.voltage.is_some());
+        self.mem_vf_curve
+            .retain(|_, point| point.clockspeed.is_some() || point.voltage.is_some());
     }
 }
 

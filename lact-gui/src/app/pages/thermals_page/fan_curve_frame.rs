@@ -306,6 +306,7 @@ impl relm4::Component for FanCurveFrame {
                         AdjustmentRowInit {
                             title: glib::markup_escape_text(&fl!(I18N, "spindown-delay")).into(),
                             value: msg.spindown_delay.unwrap_or(DEFAULT_SPINDOWN_DELAY_MS) as f64,
+                            default_value: Some(DEFAULT_SPINDOWN_DELAY_MS as f64),
                             upper: 30_000.0,
                             step_increment: 10.0,
                             page_increment: 10.0,
@@ -319,6 +320,7 @@ impl relm4::Component for FanCurveFrame {
                             title: glib::markup_escape_text(&fl!(I18N, "speed-change-threshold"))
                                 .into(),
                             value: msg.change_threshold.unwrap_or(DEFAULT_CHANGE_THRESHOLD) as f64,
+                            default_value: Some(DEFAULT_CHANGE_THRESHOLD as f64),
                             upper: 10.0,
                             page_increment: 1.0,
                             ..Default::default()
@@ -332,6 +334,7 @@ impl relm4::Component for FanCurveFrame {
                             title: glib::markup_escape_text(&fl!(I18N, "automatic-mode-threshold"))
                                 .into(),
                             value: msg.auto_threshold.unwrap_or(DEFAULT_AUTO_THRESHOLD) as f64,
+                            default_value: Some(DEFAULT_AUTO_THRESHOLD as f64),
                             upper: *msg.temperature_range.end() as f64,
                             title_tooltip: fl!(I18N, "automatic-mode-threshold-tooltip"),
                             page_increment: 5.0,
@@ -403,13 +406,9 @@ impl relm4::Component for FanCurveFrame {
                     },
                     widgets,
                 );
-                for (setting, value) in [
-                    (CurveSetting::SpindownDelay, DEFAULT_SPINDOWN_DELAY_MS),
-                    (CurveSetting::ChangeThreshold, DEFAULT_CHANGE_THRESHOLD),
-                ] {
+                for setting in [CurveSetting::SpindownDelay, CurveSetting::ChangeThreshold] {
                     if self.adjustments.get(&setting).is_some() {
-                        self.adjustments
-                            .send(&setting, AdjustmentRowMsg::SetValue(value as f64));
+                        self.adjustments.send(&setting, AdjustmentRowMsg::Reset);
                     }
                 }
             }
@@ -423,18 +422,18 @@ impl FanCurveFrame {
         self.chart.data.borrow().iter().copied().collect()
     }
 
-    pub fn spindown_delay(&self) -> u64 {
+    pub fn spindown_delay(&self) -> Option<Option<u64>> {
         self.adjustments
             .get(&CurveSetting::SpindownDelay)
-            .map(|row| row.get_value() as u64)
-            .unwrap_or(DEFAULT_SPINDOWN_DELAY_MS)
+            .and_then(|row| row.get_changed_value())
+            .map(|value| value.map(|value| value as u64))
     }
 
-    pub fn change_threshold(&self) -> u64 {
+    pub fn change_threshold(&self) -> Option<Option<u64>> {
         self.adjustments
             .get(&CurveSetting::ChangeThreshold)
-            .map(|row| row.get_value() as u64)
-            .unwrap_or(DEFAULT_CHANGE_THRESHOLD)
+            .and_then(|row| row.get_changed_value())
+            .map(|value| value.map(|value| value as u64))
     }
 
     pub fn temperature_key(&self) -> Option<String> {
@@ -447,11 +446,11 @@ impl FanCurveFrame {
         }
     }
 
-    pub fn auto_threshold(&self) -> Option<u64> {
+    pub fn auto_threshold(&self) -> Option<Option<u64>> {
         self.adjustments
             .get(&CurveSetting::AutoThreshold)
             .and_then(|row| row.get_changed_value())
-            .map(|value| value as u64)
+            .map(|value| value.map(|value| value as u64))
     }
 
     fn temp_keys_available(&self) -> bool {

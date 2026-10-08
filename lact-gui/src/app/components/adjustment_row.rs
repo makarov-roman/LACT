@@ -1,7 +1,9 @@
 use super::adjustment_value::AdjustmentValue;
-use crate::app::utils::ext::make_event_controller_no_scroll;
 use crate::app::utils::formatting::fmt_value_with_unit;
+use crate::{I18N, app::utils::ext::make_event_controller_no_scroll};
 use adw::prelude::*;
+use i18n_embed_fl::fl;
+use relm4::binding::Binding;
 use relm4::{FactorySender, RelmWidgetExt, css, factory::FactoryComponent};
 use std::marker::PhantomData;
 
@@ -22,6 +24,7 @@ pub struct AdjustmentRowInit {
     pub info_text: String,
     pub unit: String,
     pub value: f64,
+    pub default_value: Option<f64>,
     pub lower: f64,
     pub upper: f64,
     pub step_increment: f64,
@@ -36,6 +39,7 @@ impl Default for AdjustmentRowInit {
             info_text: String::new(),
             unit: String::new(),
             value: 0.0,
+            default_value: None,
             lower: 0.0,
             upper: 0.0,
             step_increment: 1.0,
@@ -46,10 +50,10 @@ impl Default for AdjustmentRowInit {
 
 #[derive(Debug)]
 pub enum AdjustmentRowMsg {
-    /// Change display units and reset the edit state.
+    /// Change display units while preserving the edit state.
     ValueRatio(f64),
-    /// Set a value as an edit, for example when the user presses Reset.
-    SetValue(f64),
+    Reset,
+    Refresh,
     SetVisible(bool),
     AddSizeGroup {
         label_group: gtk::SizeGroup,
@@ -131,17 +135,30 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
 
                     #[name = "spinbutton"]
                     gtk::SpinButton {
-                        set_adjustment: &self.adjustment,
+                        set_adjustment: &*self.adjustment,
                         set_valign: gtk::Align::Center,
+                        set_update_policy: gtk::SpinButtonUpdatePolicy::IfValid,
+                        connect_output[adjustment = self.adjustment.clone()] => move |spin| {
+                            if adjustment.setting.value().is_none() {
+                                spin.set_text(&fl!(I18N, "default-button"));
+                                gtk::glib::Propagation::Stop
+                            } else {
+                                gtk::glib::Propagation::Proceed
+                            }
+                        },
                         add_controller = make_event_controller_no_scroll(),
-                        connect_changed[sender] => move |_| {
-                            let _ = sender.output(());
+                        connect_changed[adjustment = self.adjustment.clone()] => move |spin| {
+                            if let Ok(value) = spin.text().parse::<f64>() {
+                                adjustment.setting.edit(Some(value / adjustment.value_ratio.get()));
+                            }
                         } @ text_change_signal,
                     },
                 },
 
                 gtk::Box {
                     set_spacing: 12,
+                    #[watch]
+                    set_visible: !self.unknown_default(),
 
                     #[name = "lower_label"]
                     gtk::Label {
@@ -152,7 +169,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
 
                     #[name = "scale"]
                     gtk::Scale {
-                        set_adjustment: &self.adjustment,
+                        set_adjustment: &*self.adjustment,
                         set_orientation: gtk::Orientation::Horizontal,
                         set_hexpand: true,
                         set_digits: 0,
@@ -173,27 +190,38 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
         },
 
         #[local_ref]
-        adjustment -> AdjustmentValue {
-            connect_value_changed[sender] => move |_| {
-                let _ = sender.output(());
-            } @ value_change_signal,
+        changed -> relm4::binding::BoolBinding {
+            connect_value_notify[sender] => move |changed| {
+                if changed.get() {
+                    let _ = sender.output(());
+                }
+                sender.input(AdjustmentRowMsg::Refresh);
+            },
+        },
+        #[local_ref]
+        is_default -> relm4::binding::BoolBinding {
+            connect_value_notify[sender] => move |_| {
+                sender.input(AdjustmentRowMsg::Refresh);
+            },
         },
     }
 
     fn init_model(init: Self::Init, _index: &Self::Index, _sender: FactorySender<Self>) -> Self {
+        let adjustment = AdjustmentValue::new(
+            init.value,
+            init.default_value,
+            init.lower,
+            init.upper,
+            init.step_increment,
+            init.page_increment,
+        );
         Self {
             title: init.title,
             title_tooltip: init.title_tooltip,
             info_text: init.info_text,
             unit: init.unit,
             _key: PhantomData,
-            adjustment: AdjustmentValue::new(
-                init.value,
-                init.lower,
-                init.upper,
-                init.step_increment,
-                init.page_increment,
-            ),
+            adjustment,
             value_ratio: 1.0,
             size_group_widgets: Vec::new(),
         }
@@ -206,7 +234,8 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
         _returned_widget: &gtk::ListBoxRow,
         sender: FactorySender<Self>,
     ) -> Self::Widgets {
-        let adjustment = &self.adjustment;
+        let changed = &self.adjustment.setting.is_changed;
+        let is_default = &self.adjustment.setting.is_default;
         let widgets = view_output!();
 
         widgets
@@ -216,23 +245,21 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
         &mut self,
         widgets: &mut Self::Widgets,
         msg: Self::Input,
-        _sender: FactorySender<Self>,
+        sender: FactorySender<Self>,
     ) {
         match msg {
             AdjustmentRowMsg::ValueRatio(ratio) => {
                 // Changing display units must not emit an edit notification.
-                self.adjustment.block_signal(&widgets.value_change_signal);
                 widgets.spinbutton.block_signal(&widgets.text_change_signal);
-
-                let raw_current = self.adjustment.value() / self.value_ratio;
-                let raw_min = self.adjustment.lower() / self.value_ratio;
-                let raw_max = self.adjustment.upper() / self.value_ratio;
-
-                self.adjustment.set_lower(raw_min * ratio);
-                self.adjustment.set_upper(raw_max * ratio);
-                self.adjustment.set_initial_value(raw_current * ratio);
-
+                let factor = ratio / self.value_ratio;
+                self.adjustment.without_edit_tracking(|| {
+                    let value = self.adjustment.value() * factor;
+                    self.adjustment.set_lower(self.adjustment.lower() * factor);
+                    self.adjustment.set_upper(self.adjustment.upper() * factor);
+                    self.adjustment.set_value(value);
+                });
                 self.value_ratio = ratio;
+                self.adjustment.value_ratio.set(ratio);
                 widgets
                     .lower_label
                     .set_label(&fmt_value_with_unit(self.adjustment.lower(), &self.unit));
@@ -243,11 +270,16 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
                 widgets
                     .spinbutton
                     .unblock_signal(&widgets.text_change_signal);
-                self.adjustment.unblock_signal(&widgets.value_change_signal);
             }
-            AdjustmentRowMsg::SetValue(value) => {
-                self.adjustment.set_value(value * self.value_ratio);
+            AdjustmentRowMsg::Reset => {
+                widgets.spinbutton.block_signal(&widgets.text_change_signal);
+                self.adjustment.reset();
+                widgets.spinbutton.set_value(self.adjustment.value());
+                widgets
+                    .spinbutton
+                    .unblock_signal(&widgets.text_change_signal);
             }
+            AdjustmentRowMsg::Refresh => (),
             AdjustmentRowMsg::SetVisible(visible) => {
                 if widgets.root_row.get_visible() != visible {
                     for (group, widget) in &self.size_group_widgets {
@@ -279,6 +311,7 @@ impl<Key: 'static> FactoryComponent for AdjustmentRow<Key> {
                 }
             }
         }
+        self.update_view(widgets, sender);
     }
 }
 
@@ -287,9 +320,11 @@ impl<Key> AdjustmentRow<Key> {
         self.adjustment.value() / self.value_ratio
     }
 
-    pub fn get_changed_value(&self) -> Option<f64> {
-        self.adjustment
-            .get_changed_value(false)
-            .map(|value| value / self.value_ratio)
+    pub fn get_changed_value(&self) -> Option<Option<f64>> {
+        self.adjustment.get_changed_value()
+    }
+
+    fn unknown_default(&self) -> bool {
+        self.adjustment.setting.value().is_none()
     }
 }

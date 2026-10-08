@@ -31,7 +31,6 @@ use relm4::binding::BoolBinding;
 use relm4::{ComponentController, ComponentParts, ComponentSender, RelmWidgetExt};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::debug;
 use vf_curve::{VfCurveEditor, VfCurveEditorInit, VfCurveEditorMsg};
 
 pub struct OcPage {
@@ -339,19 +338,13 @@ impl OcPage {
             .power_profile_mode_custom_heuristics()
     }
 
-    pub fn get_power_cap(&self) -> Option<f64> {
+    pub fn get_power_cap(&self) -> Option<Option<f64>> {
         self.power_frame.model().get_user_cap()
     }
 
     pub fn apply_clocks_config(&self, config: &mut config::ClocksConfiguration) {
-        let mut commands = self.gpu_clocks_frame.model().get_commands();
-        commands.extend(self.vram_clocks_frame.model().get_commands());
-
-        debug!("applying clocks commands {commands:#?}");
-
-        for command in commands {
-            config.apply_clocks_command(&command);
-        }
+        self.gpu_clocks_frame.model().apply_config(config);
+        self.vram_clocks_frame.model().apply_config(config);
 
         if !self.vf_curve_editor.model().is_empty() {
             config.nvidia_gpu_vf_curve = self.vf_curve_editor.model().get_configured_curve();

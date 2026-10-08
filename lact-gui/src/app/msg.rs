@@ -20,7 +20,6 @@ pub enum AppMsg {
     ApplyChanges,
     RevertChanges,
     SettingsChanged,
-    ResetClocks,
     ResetPmfw,
     ShowGraphsWindow,
     ShowProcessMonitor,

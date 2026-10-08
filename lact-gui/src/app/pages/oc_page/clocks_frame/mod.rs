@@ -16,6 +16,7 @@ use amdgpu_sysfs::gpu_handle::{PowerLevelId, overdrive::ClocksTableGen as AmdClo
 use i18n_embed_fl::fl;
 use lact_schema::{
     ClocksTable, DeviceStats, IntelClocksTable, NvidiaClockOffset, NvidiaClocksTable,
+    config::ClocksConfiguration,
     request::{ClockspeedType, SetClocksCommand},
 };
 use relm4::{
@@ -107,6 +108,7 @@ pub enum ClocksFrameMsg {
     Stats(Arc<DeviceStats>),
     TogglePStatesVisibility,
     ResetGpuClockOffsets,
+    Default,
 }
 
 #[relm4::component(pub)]
@@ -148,17 +150,10 @@ impl relm4::Component for ClocksFrame {
                 },
 
                 append = &gtk::Button {
-                    set_label: &fl!(I18N, "reset-now-button"),
-                    set_tooltip_text: Some(&fl!(I18N, "reset-oc-tooltip")),
-
-                    add_css_class: css::DESTRUCTIVE_ACTION,
-
+                    set_label: &fl!(I18N, "default-button"),
                     #[watch]
-                    set_visible: model.domain == ClockDomain::Gpu && model.has_any_clocks(),
-
-                    connect_clicked => move |_| {
-                        APP_BROKER.send(AppMsg::ResetClocks);
-                    }
+                    set_visible: model.has_any_clocks(),
+                    connect_clicked => ClocksFrameMsg::Default,
                 },
             },
 
@@ -389,11 +384,23 @@ impl relm4::Component for ClocksFrame {
                 self.update_vram_clock_ratio();
                 sender.input(ClocksFrameMsg::TogglePStatesVisibility);
             }
+            ClocksFrameMsg::Default => {
+                for clock_type in self.adjustments.keys() {
+                    self.adjustments.send(clock_type, AdjustmentRowMsg::Reset);
+                }
+                self.enable_locked_clocks.set_value(false);
+                if self.domain == ClockDomain::Gpu {
+                    self.vf_curve_editing.set_value(false);
+                    sender
+                        .output(OcPageMsg::VfCurveEditingToggled(false))
+                        .unwrap();
+                }
+                APP_BROKER.send(AppMsg::SettingsChanged);
+            }
             ClocksFrameMsg::ResetGpuClockOffsets => {
                 for clock_type in self.adjustments.keys() {
                     if matches!(clock_type, ClockspeedType::GpuClockOffset(_)) {
-                        self.adjustments
-                            .send(clock_type, AdjustmentRowMsg::SetValue(0.0));
+                        self.adjustments.send(clock_type, AdjustmentRowMsg::Reset);
                     }
                 }
             }
@@ -480,6 +487,7 @@ impl ClocksFrame {
                     String::new()
                 },
                 value: f64::from(data.current),
+                default_value: clock_default_value(clock_type),
                 lower: f64::from(data.min),
                 upper: f64::from(data.max),
                 step_increment: get_row_step(clock_type),
@@ -778,7 +786,13 @@ impl ClocksFrame {
         }
     }
 
-    pub fn get_commands(&self) -> Vec<SetClocksCommand> {
+    pub fn apply_config(&self, config: &mut ClocksConfiguration) {
+        for command in self.get_commands() {
+            config.apply_clocks_command(&command);
+        }
+    }
+
+    fn get_commands(&self) -> Vec<SetClocksCommand> {
         self.adjustments
             .iter()
             .filter_map(|(clock_type, row)| {
@@ -787,7 +801,9 @@ impl ClocksFrame {
                 {
                     return None;
                 }
-                let configured_value = row.get_changed_value().map(|value| value as i32);
+                let configured_value = row
+                    .get_changed_value()
+                    .map(|value| value.map(|value| value as i32));
                 // If nvidia options are enabled, we always set locked clocks to None or Some
                 let value = if self.show_nvidia_options {
                     match clock_type {
@@ -798,10 +814,10 @@ impl ClocksFrame {
                             .enable_locked_clocks
                             .value()
                             .then(|| row.get_value() as i32),
-                        _ => Some(configured_value?),
+                        _ => configured_value?,
                     }
                 } else {
-                    Some(configured_value?)
+                    configured_value?
                 };
 
                 Some(SetClocksCommand {
@@ -810,6 +826,16 @@ impl ClocksFrame {
                 })
             })
             .collect()
+    }
+}
+
+fn clock_default_value(clock_type: ClockspeedType) -> Option<f64> {
+    match clock_type {
+        ClockspeedType::GpuClockOffset(_)
+        | ClockspeedType::MemClockOffset(_)
+        | ClockspeedType::VoltageOffset
+        | ClockspeedType::VoltageBoost => Some(0.0),
+        _ => None,
     }
 }
 

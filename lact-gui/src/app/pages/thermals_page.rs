@@ -389,19 +389,22 @@ impl relm4::Component for ThermalsPage {
                                 );
                             }
                         }
-                        for (rows, title, info) in [
+                        for (rows, title, info, default_value) in [
                             (
                                 &mut self.nvidia_target_temperature,
                                 fl!(I18N, "target-temp"),
                                 stats.nvidia_thermal_info.target_temp,
+                                stats.nvidia_thermal_info.target_temp_default.map(f64::from),
                             ),
                             (
                                 &mut self.zero_rpm_temperature,
                                 fl!(I18N, "zero-rpm-stop-temp"),
                                 info.zero_rpm_temperature,
+                                None,
                             ),
                         ] {
-                            if let Some(init) = fan_info_init(title, info) {
+                            if let Some(mut init) = fan_info_init(title, info) {
+                                init.default_value = default_value;
                                 rows.insert((), init);
                                 rows.send(
                                     &(),
@@ -428,10 +431,10 @@ impl relm4::Component for ThermalsPage {
                 APP_BROKER.send(AppMsg::SettingsChanged);
             }
             ThermalsPageMsg::RestNvidiaOptions => {
-                if let Some(default) = self.target_temperature_default {
+                if self.target_temperature_default.is_some() {
                     if !self.nvidia_target_temperature.is_empty() {
                         self.nvidia_target_temperature
-                            .send(&(), AdjustmentRowMsg::SetValue(default as f64));
+                            .send(&(), AdjustmentRowMsg::Reset);
                     }
                 } else {
                     APP_BROKER.send(AppMsg::Error(Arc::new(anyhow!(
@@ -463,11 +466,15 @@ impl ThermalsPage {
 
                     let fan_curve_model = self.fan_curve_frame.model();
                     fan_settings.curve = FanCurve(fan_curve_model.get_curve());
-                    fan_settings.change_threshold = Some(fan_curve_model.change_threshold());
-                    fan_settings.spindown_delay_ms = Some(fan_curve_model.spindown_delay());
+                    if let Some(threshold) = fan_curve_model.change_threshold() {
+                        fan_settings.change_threshold = threshold;
+                    }
+                    if let Some(delay) = fan_curve_model.spindown_delay() {
+                        fan_settings.spindown_delay_ms = delay;
+                    }
 
                     if let Some(threshold) = fan_curve_model.auto_threshold() {
-                        fan_settings.auto_threshold = Some(threshold);
+                        fan_settings.auto_threshold = threshold;
                     }
 
                     if let Some(temp_key) = fan_curve_model.temperature_key() {
@@ -508,7 +515,7 @@ impl ThermalsPage {
                 .get(&setting)
                 .and_then(|row| row.get_changed_value())
             {
-                *config_value = Some(value as u32);
+                *config_value = value.map(|value| value as u32);
             }
         }
         if let Some(value) = self
@@ -516,14 +523,14 @@ impl ThermalsPage {
             .get(&())
             .and_then(|row| row.get_changed_value())
         {
-            pmfw_config.zero_rpm_threshold = Some(value as u32);
+            pmfw_config.zero_rpm_threshold = value.map(|value| value as u32);
         }
         if let Some(value) = self
             .nvidia_target_temperature
             .get(&())
             .and_then(|row| row.get_changed_value())
         {
-            config.nvidia_thermal_options.target_temperature = Some(value as u32);
+            config.nvidia_thermal_options.target_temperature = value.map(|value| value as u32);
         }
         if self.zero_rpm_available {
             pmfw_config.zero_rpm = Some(self.zero_rpm.value());

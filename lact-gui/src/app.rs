@@ -48,7 +48,7 @@ use lact_schema::{
     DeviceApiInfo, DeviceFlag, DeviceListEntry, DeviceStats, DeviceType, SystemInfo,
     args::GuiArgs,
     config::{GpuConfig, Profile},
-    request::{ConfirmCommand, ProfileBase, SetClocksCommand},
+    request::{ConfirmCommand, ProfileBase},
 };
 use msg::AppMsg;
 use page_navigation::{PageNavigation, PageNavigationInit, PageNavigationMsg};
@@ -820,16 +820,6 @@ impl AppModel {
             AppMsg::RevertChanges => {
                 sender.input(AppMsg::ReloadData { full: false });
             }
-            AppMsg::ResetClocks => {
-                let gpu_id = Self::get_selected_gpu_id()?;
-                self.daemon_client
-                    .set_clocks_value(&gpu_id, SetClocksCommand::reset())
-                    .await?;
-                self.daemon_client
-                    .confirm_pending_config(ConfirmCommand::Confirm)
-                    .await?;
-                sender.input(AppMsg::ReloadData { full: false });
-            }
             AppMsg::ResetPmfw => {
                 let gpu_id = Self::get_selected_gpu_id()?;
                 self.daemon_client.reset_pmfw(&gpu_id).await?;
@@ -1249,7 +1239,7 @@ impl AppModel {
 
         let cap = self.oc_page.model().get_power_cap();
         if let Some(cap) = cap {
-            gpu_config.power_cap = Some(cap);
+            gpu_config.power_cap = cap;
         }
 
         let performance_level = self.oc_page.model().get_performance_level();
