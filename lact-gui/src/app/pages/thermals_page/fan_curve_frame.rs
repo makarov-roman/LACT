@@ -3,7 +3,10 @@ use crate::{
     app::{
         components::{
             adjustment_card::AdjustmentCard,
-            adjustment_row::{AdjustmentRow, AdjustmentRowInit, AdjustmentRowMsg},
+            setting_row::{
+                AdjustmentControlMsg, AdjustmentInit, SettingControl, SettingRow, SettingRowInit,
+                SettingRowMsg, SettingRowValue,
+            },
         },
         graphs_window::plot::PlotColorScheme,
         msg::AppMsg,
@@ -26,8 +29,8 @@ use plotters::{
 };
 use plotters_cairo::CairoBackend;
 use relm4::{
-    ComponentParts, ComponentSender, RelmObjectExt, RelmWidgetExt, WidgetTemplate,
-    binding::U32Binding, factory::FactoryHashMap,
+    ComponentController, ComponentParts, ComponentSender, RelmObjectExt, RelmWidgetExt,
+    WidgetTemplate, binding::U32Binding, factory::FactoryHashMap,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -45,7 +48,7 @@ const TEMPERATURE_DRAG_MARGIN: f32 = 4.0;
 const PERCENTAGE_DRAG_MARGIN: f32 = 0.04;
 
 pub(super) struct FanCurveFrame {
-    adjustments: FactoryHashMap<CurveSetting, AdjustmentRow<CurveSetting>>,
+    adjustments: FactoryHashMap<CurveSetting, SettingRow<CurveSetting>>,
     label_size_group: gtk::SizeGroup,
     input_size_group: gtk::SizeGroup,
     /// PMFW fan control on AMD RDNA3+ with fixed length
@@ -303,57 +306,68 @@ impl relm4::Component for FanCurveFrame {
                 if !msg.hw_based {
                     self.adjustments.insert(
                         CurveSetting::SpindownDelay,
-                        AdjustmentRowInit {
-                            title: glib::markup_escape_text(&fl!(I18N, "spindown-delay")).into(),
-                            value: msg.spindown_delay.unwrap_or(DEFAULT_SPINDOWN_DELAY_MS) as f64,
-                            default_value: Some(DEFAULT_SPINDOWN_DELAY_MS as f64),
-                            upper: 30_000.0,
-                            step_increment: 10.0,
-                            page_increment: 10.0,
+                        SettingRowInit {
                             title_tooltip: fl!(I18N, "spindown-delay-tooltip"),
-                            ..Default::default()
+                            ..SettingRowInit::new(
+                                glib::markup_escape_text(&fl!(I18N, "spindown-delay")).into(),
+                                AdjustmentInit {
+                                    value: msg.spindown_delay.unwrap_or(DEFAULT_SPINDOWN_DELAY_MS)
+                                        as f64,
+                                    default_value: Some(DEFAULT_SPINDOWN_DELAY_MS as f64),
+                                    upper: 30_000.0,
+                                    step_increment: 10.0,
+                                    page_increment: 10.0,
+                                    ..Default::default()
+                                },
+                            )
                         },
                     );
                     self.adjustments.insert(
                         CurveSetting::ChangeThreshold,
-                        AdjustmentRowInit {
-                            title: glib::markup_escape_text(&fl!(I18N, "speed-change-threshold"))
-                                .into(),
-                            value: msg.change_threshold.unwrap_or(DEFAULT_CHANGE_THRESHOLD) as f64,
-                            default_value: Some(DEFAULT_CHANGE_THRESHOLD as f64),
-                            upper: 10.0,
-                            page_increment: 1.0,
-                            ..Default::default()
-                        },
+                        SettingRowInit::new(
+                            glib::markup_escape_text(&fl!(I18N, "speed-change-threshold")).into(),
+                            AdjustmentInit {
+                                value: msg.change_threshold.unwrap_or(DEFAULT_CHANGE_THRESHOLD)
+                                    as f64,
+                                default_value: Some(DEFAULT_CHANGE_THRESHOLD as f64),
+                                upper: 10.0,
+                                page_increment: 1.0,
+                                ..Default::default()
+                            },
+                        ),
                     );
                 }
                 if msg.auto_threshold_supported && *msg.temperature_range.end() != 0.0 {
                     self.adjustments.insert(
                         CurveSetting::AutoThreshold,
-                        AdjustmentRowInit {
-                            title: glib::markup_escape_text(&fl!(I18N, "automatic-mode-threshold"))
-                                .into(),
-                            value: msg.auto_threshold.unwrap_or(DEFAULT_AUTO_THRESHOLD) as f64,
-                            upper: *msg.temperature_range.end() as f64,
+                        SettingRowInit {
                             title_tooltip: fl!(I18N, "automatic-mode-threshold-tooltip"),
-                            page_increment: 5.0,
-                            ..Default::default()
+                            ..SettingRowInit::new(
+                                glib::markup_escape_text(&fl!(I18N, "automatic-mode-threshold"))
+                                    .into(),
+                                AdjustmentInit {
+                                    value: msg.auto_threshold.unwrap_or(DEFAULT_AUTO_THRESHOLD)
+                                        as f64,
+                                    upper: *msg.temperature_range.end() as f64,
+                                    page_increment: 5.0,
+                                    ..Default::default()
+                                },
+                            )
                         },
                     );
                 }
 
                 let lower_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
                 let upper_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
-                for setting in self.adjustments.keys() {
-                    self.adjustments.send(
-                        setting,
-                        AdjustmentRowMsg::AddSizeGroup {
+                for row in self.adjustments.values() {
+                    if let SettingControl::Adjustment(control) = &row.control {
+                        control.emit(AdjustmentControlMsg::AddSizeGroup {
                             label_group: self.label_size_group.clone(),
                             input_group: self.input_size_group.clone(),
                             lower_label_group: lower_label_group.clone(),
                             upper_label_group: upper_label_group.clone(),
-                        },
-                    );
+                        });
+                    }
                 }
                 widgets.drawing_area.queue_draw();
             }
@@ -407,7 +421,7 @@ impl relm4::Component for FanCurveFrame {
                 );
                 for setting in [CurveSetting::SpindownDelay, CurveSetting::ChangeThreshold] {
                     if self.adjustments.get(&setting).is_some() {
-                        self.adjustments.send(&setting, AdjustmentRowMsg::Reset);
+                        self.adjustments.send(&setting, SettingRowMsg::Reset);
                     }
                 }
             }
@@ -424,14 +438,16 @@ impl FanCurveFrame {
     pub fn spindown_delay(&self) -> u64 {
         self.adjustments
             .get(&CurveSetting::SpindownDelay)
-            .map(|row| row.get_value() as u64)
+            .and_then(|row| row.get_value().as_numeric())
+            .map(|value| value as u64)
             .unwrap_or(DEFAULT_SPINDOWN_DELAY_MS)
     }
 
     pub fn change_threshold(&self) -> u64 {
         self.adjustments
             .get(&CurveSetting::ChangeThreshold)
-            .map(|row| row.get_value() as u64)
+            .and_then(|row| row.get_value().as_numeric())
+            .map(|value| value as u64)
             .unwrap_or(DEFAULT_CHANGE_THRESHOLD)
     }
 
@@ -449,6 +465,7 @@ impl FanCurveFrame {
         self.adjustments
             .get(&CurveSetting::AutoThreshold)
             .and_then(|row| row.get_changed_value())
+            .and_then(SettingRowValue::as_numeric)
             .map(|value| value as u64)
     }
 

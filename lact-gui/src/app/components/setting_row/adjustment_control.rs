@@ -1,0 +1,201 @@
+use super::super::{adjustment_value::AdjustmentValue, setting_value::SettingValue};
+use crate::app::utils::{ext::make_event_controller_no_scroll, formatting::fmt_value_with_unit};
+use adw::prelude::*;
+use relm4::{Component, ComponentParts, ComponentSender, css};
+
+pub struct AdjustmentInit {
+    pub unit: String,
+    pub value: f64,
+    pub default_value: Option<f64>,
+    pub lower: f64,
+    pub upper: f64,
+    pub step_increment: f64,
+    pub page_increment: f64,
+}
+
+impl Default for AdjustmentInit {
+    fn default() -> Self {
+        Self {
+            unit: String::new(),
+            value: 0.0,
+            default_value: None,
+            lower: 0.0,
+            upper: 0.0,
+            step_increment: 1.0,
+            page_increment: 10.0,
+        }
+    }
+}
+
+pub struct AdjustmentControl {
+    pub(super) value: AdjustmentValue,
+    title: gtk::Box,
+    unit: String,
+    size_group_widgets: Vec<(gtk::SizeGroup, gtk::Widget)>,
+}
+
+#[derive(Debug)]
+pub enum AdjustmentControlMsg {
+    Changed,
+    /// Change numeric display units and reset the edit state.
+    SetValueRatio(f64),
+    Reset,
+    SetVisible(bool),
+    AddSizeGroup {
+        label_group: gtk::SizeGroup,
+        input_group: gtk::SizeGroup,
+        lower_label_group: gtk::SizeGroup,
+        upper_label_group: gtk::SizeGroup,
+    },
+}
+
+#[relm4::component(pub)]
+impl Component for AdjustmentControl {
+    type Init = (AdjustmentInit, gtk::Box);
+    type Input = AdjustmentControlMsg;
+    type Output = ();
+    type CommandOutput = ();
+
+    view! {
+        #[root]
+        gtk::Box {
+            set_orientation: gtk::Orientation::Vertical,
+
+            gtk::Box {
+                set_spacing: 12,
+                append: &model.title,
+
+                #[name = "spinbutton"]
+                gtk::SpinButton {
+                    set_adjustment: &*model.value,
+                    set_valign: gtk::Align::Center,
+                    add_controller = make_event_controller_no_scroll(),
+                    connect_changed => AdjustmentControlMsg::Changed @ text_change_signal,
+                },
+            },
+
+            gtk::Box {
+                set_spacing: 12,
+
+                #[name = "lower_label"]
+                gtk::Label {
+                    set_label: &fmt_value_with_unit(model.value.lower(), &model.unit),
+                    add_css_class: css::CAPTION,
+                    add_css_class: css::DIM_LABEL,
+                },
+                gtk::Scale {
+                    set_adjustment: &*model.value,
+                    set_orientation: gtk::Orientation::Horizontal,
+                    set_hexpand: true,
+                    set_digits: 0,
+                    set_round_digits: 0,
+                    set_value_pos: gtk::PositionType::Right,
+                    set_width_request: 100,
+                    add_controller = make_event_controller_no_scroll(),
+                },
+                #[name = "upper_label"]
+                gtk::Label {
+                    set_label: &fmt_value_with_unit(model.value.upper(), &model.unit),
+                    add_css_class: css::CAPTION,
+                    add_css_class: css::DIM_LABEL,
+                },
+            },
+        },
+
+        // Both uncommitted text edits and committed numeric edits notify the parent.
+        #[local_ref]
+        adjustment -> gtk::Adjustment {
+            connect_value_changed => AdjustmentControlMsg::Changed @ value_change_signal,
+        },
+    }
+
+    fn init(
+        (init, title): Self::Init,
+        root: Self::Root,
+        sender: ComponentSender<Self>,
+    ) -> ComponentParts<Self> {
+        let model = Self {
+            value: AdjustmentValue::new(
+                init.value,
+                init.default_value,
+                init.lower,
+                init.upper,
+                init.step_increment,
+                init.page_increment,
+            ),
+            title,
+            unit: init.unit,
+            size_group_widgets: Vec::new(),
+        };
+        let adjustment = &*model.value;
+        let widgets = view_output!();
+        ComponentParts { model, widgets }
+    }
+
+    fn update_with_view(
+        &mut self,
+        widgets: &mut Self::Widgets,
+        msg: Self::Input,
+        sender: ComponentSender<Self>,
+        root: &Self::Root,
+    ) {
+        match msg {
+            AdjustmentControlMsg::Changed => {
+                let _ = sender.output(());
+            }
+            AdjustmentControlMsg::SetValueRatio(ratio) => {
+                self.value.block_signal(&widgets.value_change_signal);
+                widgets.spinbutton.block_signal(&widgets.text_change_signal);
+                self.value.set_value_ratio(ratio);
+                widgets
+                    .lower_label
+                    .set_label(&fmt_value_with_unit(self.value.lower(), &self.unit));
+                widgets
+                    .upper_label
+                    .set_label(&fmt_value_with_unit(self.value.upper(), &self.unit));
+                widgets
+                    .spinbutton
+                    .unblock_signal(&widgets.text_change_signal);
+                self.value.unblock_signal(&widgets.value_change_signal);
+            }
+            AdjustmentControlMsg::Reset => self.value.reset(),
+            AdjustmentControlMsg::SetVisible(visible) => {
+                if root.get_visible() != visible {
+                    for (group, widget) in &self.size_group_widgets {
+                        if visible {
+                            group.add_widget(widget);
+                        } else {
+                            group.remove_widget(widget);
+                        }
+                    }
+                }
+                root.set_visible(visible);
+            }
+            AdjustmentControlMsg::AddSizeGroup {
+                label_group,
+                input_group,
+                lower_label_group,
+                upper_label_group,
+            } => {
+                let groups = [
+                    (label_group, self.title.clone().upcast::<gtk::Widget>()),
+                    (input_group, widgets.spinbutton.clone().upcast()),
+                    (lower_label_group, widgets.lower_label.clone().upcast()),
+                    (upper_label_group, widgets.upper_label.clone().upcast()),
+                ];
+                if root.get_visible() {
+                    for (group, widget) in &groups {
+                        group.add_widget(widget);
+                    }
+                }
+                self.size_group_widgets.extend(groups);
+            }
+        }
+    }
+
+    fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
+        for (group, widget) in self.size_group_widgets.drain(..) {
+            group.remove_widget(&widget);
+        }
+    }
+}

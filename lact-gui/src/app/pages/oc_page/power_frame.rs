@@ -3,8 +3,8 @@ use crate::{
     app::{
         components::{
             adjustment_card::AdjustmentCard,
-            adjustment_row::{AdjustmentRow, AdjustmentRowInit, AdjustmentRowMsg},
             page_section::PageSection,
+            setting_row::{AdjustmentInit, SettingRow, SettingRowInit, SettingRowMsg},
         },
         msg::AppMsg,
         pages::oc_page::{
@@ -24,7 +24,7 @@ use relm4::{
 };
 
 pub struct PowerFrame {
-    power_row: FactoryHashMap<(), AdjustmentRow<()>>,
+    power_row: FactoryHashMap<(), SettingRow<()>>,
     performance_frame: relm4::Controller<PerformanceFrame>,
 }
 
@@ -89,7 +89,7 @@ impl relm4::Component for PowerFrame {
 
         let widgets = view_output!();
         let rows = model.performance_frame.widget().rows().map(Clone::clone);
-        // FIXME: performance rows should be factory items like AdjustmentRow; until then
+        // FIXME: performance rows should be factory items like SettingRow; until then
         // sort to keep the power limit before them when the factory recreates it.
         model.power_row.widget().set_sort_func(move |left, right| {
             rows.iter()
@@ -115,15 +115,17 @@ impl relm4::Component for PowerFrame {
                 if let Some(value) = power.cap_current {
                     self.power_row.insert(
                         (),
-                        AdjustmentRowInit {
-                            title: fl!(I18N, "power-cap"),
-                            unit: fl!(I18N, "watt"),
-                            value,
-                            default_value: Some(power.cap_default.unwrap_or_default()),
-                            lower: power.cap_min.unwrap_or_default(),
-                            upper: power.cap_max.unwrap_or_default(),
-                            ..Default::default()
-                        },
+                        SettingRowInit::new(
+                            fl!(I18N, "power-cap"),
+                            AdjustmentInit {
+                                unit: fl!(I18N, "watt"),
+                                value,
+                                default_value: Some(power.cap_default.unwrap_or_default()),
+                                lower: power.cap_min.unwrap_or_default(),
+                                upper: power.cap_max.unwrap_or_default(),
+                                ..Default::default()
+                            },
+                        ),
                     );
                 }
             }
@@ -133,7 +135,7 @@ impl relm4::Component for PowerFrame {
             PowerFrameMsg::RefreshVisibility => (),
             PowerFrameMsg::Reset => {
                 if !self.power_row.is_empty() {
-                    self.power_row.send(&(), AdjustmentRowMsg::Reset);
+                    self.power_row.send(&(), SettingRowMsg::Reset);
                 }
             }
         }
@@ -156,7 +158,8 @@ impl PowerFrame {
     pub fn get_user_cap(&self) -> Option<f64> {
         self.power_row
             .get(&())?
-            .get_changed_value()
+            .get_changed_value()?
+            .as_numeric()
             .filter(|value| *value != 0.0)
     }
 
