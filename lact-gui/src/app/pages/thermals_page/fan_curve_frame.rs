@@ -263,19 +263,14 @@ impl relm4::Component for FanCurveFrame {
                         SettingRowInit {
                             label_group: Some(self.label_size_group.clone()),
                             input_group: Some(self.input_size_group.clone()),
-                            ..SettingRowInit::new(
-                                fl!(I18N, "temperature-sensor"),
-                                SelectInit {
-                                    options: self
-                                        .temp_keys
-                                        .iter()
-                                        .cloned()
-                                        .map(Into::into)
-                                        .collect(),
-                                    selected: selected_idx.map(|index| index as u32),
-                                    ..Default::default()
-                                },
-                            )
+                            title: fl!(I18N, "temperature-sensor"),
+                            control: SelectInit {
+                                options: self.temp_keys.iter().cloned().map(Into::into).collect(),
+                                selected: selected_idx.map(|index| index as u32),
+                                ..Default::default()
+                            }
+                            .into(),
+                            ..Default::default()
                         },
                     );
                 }
@@ -286,20 +281,20 @@ impl relm4::Component for FanCurveFrame {
                             title_tooltip: fl!(I18N, "spindown-delay-tooltip"),
                             label_group: Some(self.label_size_group.clone()),
                             input_group: Some(self.input_size_group.clone()),
-                            ..SettingRowInit::new(
-                                glib::markup_escape_text(&fl!(I18N, "spindown-delay")).into(),
-                                AdjustmentInit {
-                                    value: msg.spindown_delay.unwrap_or(DEFAULT_SPINDOWN_DELAY_MS)
-                                        as f64,
-                                    default_value: Some(DEFAULT_SPINDOWN_DELAY_MS as f64),
-                                    upper: 30_000.0,
-                                    step_increment: 10.0,
-                                    page_increment: 10.0,
-                                    lower_label_group: Some(lower_label_group.clone()),
-                                    upper_label_group: Some(upper_label_group.clone()),
-                                    ..Default::default()
-                                },
-                            )
+                            title: glib::markup_escape_text(&fl!(I18N, "spindown-delay")).into(),
+                            control: AdjustmentInit {
+                                value: msg.spindown_delay.unwrap_or(DEFAULT_SPINDOWN_DELAY_MS)
+                                    as f64,
+                                default_value: Some(DEFAULT_SPINDOWN_DELAY_MS as f64),
+                                upper: 30_000.0,
+                                step_increment: 10.0,
+                                page_increment: 10.0,
+                                lower_label_group: Some(lower_label_group.clone()),
+                                upper_label_group: Some(upper_label_group.clone()),
+                                ..Default::default()
+                            }
+                            .into(),
+                            ..Default::default()
                         },
                     );
                     self.adjustments.insert(
@@ -307,20 +302,20 @@ impl relm4::Component for FanCurveFrame {
                         SettingRowInit {
                             label_group: Some(self.label_size_group.clone()),
                             input_group: Some(self.input_size_group.clone()),
-                            ..SettingRowInit::new(
-                                glib::markup_escape_text(&fl!(I18N, "speed-change-threshold"))
-                                    .into(),
-                                AdjustmentInit {
-                                    value: msg.change_threshold.unwrap_or(DEFAULT_CHANGE_THRESHOLD)
-                                        as f64,
-                                    default_value: Some(DEFAULT_CHANGE_THRESHOLD as f64),
-                                    upper: 10.0,
-                                    page_increment: 1.0,
-                                    lower_label_group: Some(lower_label_group.clone()),
-                                    upper_label_group: Some(upper_label_group.clone()),
-                                    ..Default::default()
-                                },
-                            )
+                            title: glib::markup_escape_text(&fl!(I18N, "speed-change-threshold"))
+                                .into(),
+                            control: AdjustmentInit {
+                                value: msg.change_threshold.unwrap_or(DEFAULT_CHANGE_THRESHOLD)
+                                    as f64,
+                                default_value: Some(DEFAULT_CHANGE_THRESHOLD as f64),
+                                upper: 10.0,
+                                page_increment: 1.0,
+                                lower_label_group: Some(lower_label_group.clone()),
+                                upper_label_group: Some(upper_label_group.clone()),
+                                ..Default::default()
+                            }
+                            .into(),
+                            ..Default::default()
                         },
                     );
                 }
@@ -331,19 +326,18 @@ impl relm4::Component for FanCurveFrame {
                             title_tooltip: fl!(I18N, "automatic-mode-threshold-tooltip"),
                             label_group: Some(self.label_size_group.clone()),
                             input_group: Some(self.input_size_group.clone()),
-                            ..SettingRowInit::new(
-                                glib::markup_escape_text(&fl!(I18N, "automatic-mode-threshold"))
-                                    .into(),
-                                AdjustmentInit {
-                                    value: msg.auto_threshold.unwrap_or(DEFAULT_AUTO_THRESHOLD)
-                                        as f64,
-                                    upper: *msg.temperature_range.end() as f64,
-                                    page_increment: 5.0,
-                                    lower_label_group: Some(lower_label_group.clone()),
-                                    upper_label_group: Some(upper_label_group.clone()),
-                                    ..Default::default()
-                                },
-                            )
+                            title: glib::markup_escape_text(&fl!(I18N, "automatic-mode-threshold"))
+                                .into(),
+                            control: AdjustmentInit {
+                                value: msg.auto_threshold.unwrap_or(DEFAULT_AUTO_THRESHOLD) as f64,
+                                upper: *msg.temperature_range.end() as f64,
+                                page_increment: 5.0,
+                                lower_label_group: Some(lower_label_group.clone()),
+                                upper_label_group: Some(upper_label_group.clone()),
+                                ..Default::default()
+                            }
+                            .into(),
+                            ..Default::default()
                         },
                     );
                 }

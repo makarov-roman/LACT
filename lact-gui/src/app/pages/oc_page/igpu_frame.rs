@@ -78,14 +78,16 @@ impl relm4::Component for IGpuFrame {
                         .collect();
                     self.rows.insert(
                         (),
-                        SettingRowInit::new(
-                            fl!(I18N, "uma-carveout"),
-                            SelectInit {
+                        SettingRowInit {
+                            title: fl!(I18N, "uma-carveout"),
+                            control: SelectInit {
                                 options,
                                 selected: Some(carveout.current as u32),
                                 ..Default::default()
-                            },
-                        ),
+                            }
+                            .into(),
+                            ..Default::default()
+                        },
                     );
                 }
             }

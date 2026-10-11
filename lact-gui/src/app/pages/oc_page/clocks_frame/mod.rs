@@ -472,21 +472,21 @@ impl ClocksFrame {
                 } else {
                     String::new()
                 },
-                ..SettingRowInit::new(
-                    data.custom_title.unwrap_or_else(|| clock_title(clock_type)),
-                    AdjustmentInit {
-                        unit: clock_unit(clock_type),
-                        value: f64::from(data.current),
-                        default_value: matches!(clock_type, ClockspeedType::GpuClockOffset(_))
-                            .then_some(0.0),
-                        lower: f64::from(data.min),
-                        upper: f64::from(data.max),
-                        step_increment: get_row_step(clock_type),
-                        lower_label_group: Some(self.lower_label_group.clone()),
-                        upper_label_group: Some(self.upper_label_group.clone()),
-                        ..Default::default()
-                    },
-                )
+                title: data.custom_title.unwrap_or_else(|| clock_title(clock_type)),
+                control: AdjustmentInit {
+                    unit: clock_unit(clock_type),
+                    value: f64::from(data.current),
+                    default_value: matches!(clock_type, ClockspeedType::GpuClockOffset(_))
+                        .then_some(0.0),
+                    lower: f64::from(data.min),
+                    upper: f64::from(data.max),
+                    step_increment: get_row_step(clock_type),
+                    lower_label_group: Some(self.lower_label_group.clone()),
+                    upper_label_group: Some(self.upper_label_group.clone()),
+                    ..Default::default()
+                }
+                .into(),
+                ..Default::default()
             },
         );
         if data.is_secondary_p_state {

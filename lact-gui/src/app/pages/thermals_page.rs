@@ -291,16 +291,18 @@ impl relm4::Component for ThermalsPage {
 
                         self.static_speed.insert(
                             (),
-                            SettingRowInit::new(
-                                glib::markup_escape_text(&fl!(I18N, "static-speed")).into(),
-                                AdjustmentInit {
+                            SettingRowInit {
+                                title: glib::markup_escape_text(&fl!(I18N, "static-speed")).into(),
+                                control: AdjustmentInit {
                                     value: (stats.fan.static_speed.unwrap_or(0.5) * 100.0).into(),
                                     lower: (*speed_range.start() as f64 * 100.0).round(),
                                     upper: (*speed_range.end() as f64 * 100.0).round(),
                                     page_increment: 5.0,
                                     ..Default::default()
-                                },
-                            ),
+                                }
+                                .into(),
+                                ..Default::default()
+                            },
                         );
 
                         let temperature_range = stats
@@ -354,14 +356,14 @@ impl relm4::Component for ThermalsPage {
                                     SettingRowInit {
                                         label_group: Some(self.label_size_group.clone()),
                                         input_group: Some(self.input_size_group.clone()),
-                                        ..SettingRowInit::new(
-                                            glib::markup_escape_text(&title).into(),
-                                            AdjustmentInit {
-                                                lower_label_group: Some(lower_label_group.clone()),
-                                                upper_label_group: Some(upper_label_group.clone()),
-                                                ..init
-                                            },
-                                        )
+                                        title: glib::markup_escape_text(&title).into(),
+                                        control: AdjustmentInit {
+                                            lower_label_group: Some(lower_label_group.clone()),
+                                            upper_label_group: Some(upper_label_group.clone()),
+                                            ..init
+                                        }
+                                        .into(),
+                                        ..Default::default()
                                     },
                                 );
                             }
@@ -375,14 +377,15 @@ impl relm4::Component for ThermalsPage {
                                 SettingRowInit {
                                     label_group: Some(self.label_size_group.clone()),
                                     input_group: Some(self.input_size_group.clone()),
-                                    ..SettingRowInit::new(
-                                        glib::markup_escape_text(&fl!(I18N, "target-temp")).into(),
-                                        AdjustmentInit {
-                                            lower_label_group: Some(lower_label_group.clone()),
-                                            upper_label_group: Some(upper_label_group.clone()),
-                                            ..init
-                                        },
-                                    )
+                                    title: glib::markup_escape_text(&fl!(I18N, "target-temp"))
+                                        .into(),
+                                    control: AdjustmentInit {
+                                        lower_label_group: Some(lower_label_group.clone()),
+                                        upper_label_group: Some(upper_label_group.clone()),
+                                        ..init
+                                    }
+                                    .into(),
+                                    ..Default::default()
                                 },
                             );
                         }
@@ -391,13 +394,13 @@ impl relm4::Component for ThermalsPage {
                                 ThermalSetting::ZeroRpmEnabled,
                                 SettingRowInit {
                                     label_group: Some(self.label_size_group.clone()),
-                                    ..SettingRowInit::new(
-                                        glib::markup_escape_text(&fl!(I18N, "zero-rpm")).into(),
-                                        BooleanInit {
-                                            value,
-                                            ..Default::default()
-                                        },
-                                    )
+                                    title: glib::markup_escape_text(&fl!(I18N, "zero-rpm")).into(),
+                                    control: BooleanInit {
+                                        value,
+                                        ..Default::default()
+                                    }
+                                    .into(),
+                                    ..Default::default()
                                 },
                             );
                         }
@@ -407,15 +410,18 @@ impl relm4::Component for ThermalsPage {
                                 SettingRowInit {
                                     label_group: Some(self.label_size_group.clone()),
                                     input_group: Some(self.input_size_group.clone()),
-                                    ..SettingRowInit::new(
-                                        glib::markup_escape_text(&fl!(I18N, "zero-rpm-stop-temp"))
-                                            .into(),
-                                        AdjustmentInit {
-                                            lower_label_group: Some(lower_label_group.clone()),
-                                            upper_label_group: Some(upper_label_group.clone()),
-                                            ..init
-                                        },
-                                    )
+                                    title: glib::markup_escape_text(&fl!(
+                                        I18N,
+                                        "zero-rpm-stop-temp"
+                                    ))
+                                    .into(),
+                                    control: AdjustmentInit {
+                                        lower_label_group: Some(lower_label_group.clone()),
+                                        upper_label_group: Some(upper_label_group.clone()),
+                                        ..init
+                                    }
+                                    .into(),
+                                    ..Default::default()
                                 },
                             );
                         }

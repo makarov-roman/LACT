@@ -20,6 +20,7 @@ pub struct SettingRow<Key> {
     _key: PhantomData<Key>,
 }
 
+#[derive(Default)]
 pub struct SettingRowInit {
     pub title: String,
     pub title_tooltip: String,
@@ -29,23 +30,16 @@ pub struct SettingRowInit {
     pub control: SettingControlInit,
 }
 
-impl SettingRowInit {
-    pub fn new(title: String, control: impl Into<SettingControlInit>) -> Self {
-        Self {
-            title,
-            title_tooltip: String::new(),
-            info_text: String::new(),
-            label_group: None,
-            input_group: None,
-            control: control.into(),
-        }
-    }
-}
-
 pub enum SettingControlInit {
     Adjustment(AdjustmentInit),
     Boolean(BooleanInit),
     Select(SelectInit),
+}
+
+impl Default for SettingControlInit {
+    fn default() -> Self {
+        Self::Adjustment(AdjustmentInit::default())
+    }
 }
 
 impl From<AdjustmentInit> for SettingControlInit {

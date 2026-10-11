@@ -121,17 +121,19 @@ impl relm4::Component for PowerFrame {
                 if let Some(value) = power.cap_current {
                     self.rows.insert(
                         PowerSetting::PowerCap,
-                        SettingRowInit::new(
-                            fl!(I18N, "power-cap"),
-                            AdjustmentInit {
+                        SettingRowInit {
+                            title: fl!(I18N, "power-cap"),
+                            control: AdjustmentInit {
                                 unit: fl!(I18N, "watt"),
                                 value,
                                 default_value: Some(power.cap_default.unwrap_or_default()),
                                 lower: power.cap_min.unwrap_or_default(),
                                 upper: power.cap_max.unwrap_or_default(),
                                 ..Default::default()
-                            },
-                        ),
+                            }
+                            .into(),
+                            ..Default::default()
+                        },
                     );
                 }
             }
@@ -144,9 +146,9 @@ impl relm4::Component for PowerFrame {
                     }
                     self.rows.insert(
                         PowerSetting::PerformanceLevel,
-                        SettingRowInit::new(
-                            fl!(I18N, "performance-level"),
-                            SelectInit {
+                        SettingRowInit {
+                            title: fl!(I18N, "performance-level"),
+                            control: SelectInit {
                                 options: self
                                     .performance_levels
                                     .iter()
@@ -159,8 +161,10 @@ impl relm4::Component for PowerFrame {
                                     .position(|candidate| *candidate == level)
                                     .map(|index| index as u32),
                                 ..Default::default()
-                            },
-                        ),
+                            }
+                            .into(),
+                            ..Default::default()
+                        },
                     );
                 }
                 let _ = sender.output(OcPageMsg::PerformanceLevelChanged);
@@ -187,27 +191,27 @@ impl relm4::Component for PowerFrame {
                         PowerSetting::PowerProfile,
                         SettingRowInit {
                             info_text: fl!(I18N, "manual-level-needed"),
-                            ..SettingRowInit::new(
-                                fl!(I18N, "power-profile-mode"),
-                                SelectInit {
-                                    options: table
-                                        .modes
-                                        .values()
-                                        .map(|mode| mode.name.clone().into())
-                                        .collect(),
-                                    selected: table
-                                        .modes
-                                        .keys()
-                                        .position(|key| *key == table.active)
-                                        .map(|index| index as u32),
-                                    details: table
-                                        .modes
-                                        .values()
-                                        .any(|mode| !mode.components.is_empty())
-                                        .then(|| self.heuristics_notebook.clone().upcast()),
-                                    ..Default::default()
-                                },
-                            )
+                            title: fl!(I18N, "power-profile-mode"),
+                            control: SelectInit {
+                                options: table
+                                    .modes
+                                    .values()
+                                    .map(|mode| mode.name.clone().into())
+                                    .collect(),
+                                selected: table
+                                    .modes
+                                    .keys()
+                                    .position(|key| *key == table.active)
+                                    .map(|index| index as u32),
+                                details: table
+                                    .modes
+                                    .values()
+                                    .any(|mode| !mode.components.is_empty())
+                                    .then(|| self.heuristics_notebook.clone().upcast()),
+                                ..Default::default()
+                            }
+                            .into(),
+                            ..Default::default()
                         },
                     );
                 }
@@ -223,9 +227,9 @@ impl relm4::Component for PowerFrame {
                     }
                     self.rows.insert(
                         PowerSetting::PowerMizer,
-                        SettingRowInit::new(
-                            fl!(I18N, "power-mizer-mode"),
-                            SelectInit {
+                        SettingRowInit {
+                            title: fl!(I18N, "power-mizer-mode"),
+                            control: SelectInit {
                                 options: self
                                     .supported_power_mizer_modes
                                     .iter()
@@ -238,8 +242,10 @@ impl relm4::Component for PowerFrame {
                                     .position(|mode| *mode == active)
                                     .map(|index| index as u32),
                                 ..Default::default()
-                            },
-                        ),
+                            }
+                            .into(),
+                            ..Default::default()
+                        },
                     );
                 }
             }
