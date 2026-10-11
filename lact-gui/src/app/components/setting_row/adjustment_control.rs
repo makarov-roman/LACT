@@ -45,7 +45,6 @@ pub enum AdjustmentControlMsg {
     SetValueRatio(f64),
     Reset,
     SetVisible(bool),
-    SetSensitive(bool),
 }
 
 #[relm4::component(pub)]
@@ -175,10 +174,6 @@ impl Component for AdjustmentControl {
                 self.value.unblock_signal(&widgets.value_change_signal);
             }
             AdjustmentControlMsg::Reset => self.value.reset(),
-            AdjustmentControlMsg::SetSensitive(sensitive) => {
-                widgets.spinbutton.set_sensitive(sensitive);
-                widgets.scale.set_sensitive(sensitive);
-            }
             AdjustmentControlMsg::SetVisible(visible) => {
                 if root.get_visible() != visible {
                     for (group, widget) in &self.size_group_widgets {

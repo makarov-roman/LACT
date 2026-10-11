@@ -162,8 +162,6 @@ fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainCont
     assert!(bool_root.has_css_class("boolean-row"));
     assert!(numeric_root.has_css_class("adjustment-row"));
     let switch = find_widget::<gtk::Switch>(bool_root.upcast_ref()).unwrap();
-    let spin = find_widget::<gtk::SpinButton>(numeric_root.upcast_ref()).unwrap();
-    let scale = find_widget::<gtk::Scale>(numeric_root.upcast_ref()).unwrap();
     assert!(switch.is_active());
     assert_eq!(rows[&0].get_value().as_boolean(), Some(true));
     assert_eq!(rows[&1].get_value().as_numeric(), Some(50.0));
@@ -187,13 +185,6 @@ fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainCont
     assert!(!switch.is_active());
     assert_eq!(rows[&0].serialize(), None);
 
-    for key in [0, 1] {
-        rows.send(&key, SettingRowMsg::SetSensitive(false));
-    }
-    drain(context);
-    assert!(!switch.is_sensitive());
-    assert!(!spin.is_sensitive());
-    assert!(!scale.is_sensitive());
     assert_eq!(groups[0].widgets().len(), 2);
     assert_eq!(groups[1].widgets().len(), 2);
     assert_eq!(groups[2].widgets().len(), 1);
@@ -310,7 +301,6 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
                 ],
                 selected: Some(1),
                 default_value: Some(0),
-                ..Default::default()
             }
             .into(),
             ..Default::default()
@@ -332,11 +322,7 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
     };
     let description = control.widgets().description_label.clone();
     assert_eq!(description.text(), "Manual clocks");
-    rows.send(&(), SettingRowMsg::SetSensitive(false));
-    drain(context);
-    assert!(!dropdown.is_sensitive());
     assert!(groups.iter().all(|group| group.widgets().len() == 1));
-    rows.send(&(), SettingRowMsg::SetSensitive(true));
     rows.send(&(), SettingRowMsg::SetVisible(false));
     drain(context);
     assert!(!root.get_visible());
@@ -383,7 +369,6 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
                 options: vec!["Auto".to_owned().into()],
                 selected: Some(10),
                 default_value: Some(10),
-                ..Default::default()
             }
             .into(),
             ..Default::default()

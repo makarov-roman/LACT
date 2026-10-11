@@ -1,5 +1,3 @@
-mod heuristics_list;
-
 use crate::{
     APP_BROKER, I18N,
     app::{
@@ -12,18 +10,20 @@ use crate::{
             },
         },
         msg::AppMsg,
-        pages::oc_page::OcPageMsg,
+        pages::oc_page::{
+            OcPageMsg,
+            performance_frame::{PerformanceFrame, PerformanceFrameMsg},
+        },
+        utils::ext::RelmDefaultLauchable,
     },
 };
 use adw::prelude::*;
 use amdgpu_sysfs::gpu_handle::{PerformanceLevel, power_profile_mode::PowerProfileModesTable};
-use heuristics_list::PowerProfileHeuristicsList;
 use i18n_embed_fl::fl;
 use lact_schema::{PowerStats, config::GpuConfig};
 use nvml_wrapper::enums::device::PowerMizerMode;
 use relm4::{
-    Component, ComponentController, ComponentParts, ComponentSender, WidgetTemplate,
-    factory::FactoryHashMap,
+    ComponentController, ComponentParts, ComponentSender, WidgetTemplate, factory::FactoryHashMap,
 };
 
 const PERFORMANCE_LEVELS: [PerformanceLevel; 8] = [
@@ -41,17 +41,14 @@ const PERFORMANCE_LEVELS: [PerformanceLevel; 8] = [
 pub enum PowerSetting {
     PowerCap,
     PerformanceLevel,
-    PowerProfile,
     PowerMizer,
 }
 
 pub struct PowerFrame {
     rows: FactoryHashMap<PowerSetting, SettingRow<PowerSetting>>,
     performance_levels: Vec<PerformanceLevel>,
-    power_profile_modes_table: Option<PowerProfileModesTable>,
+    performance_frame: relm4::Controller<PerformanceFrame>,
     supported_power_mizer_modes: Vec<PowerMizerMode>,
-    heuristics_notebook: gtk::Notebook,
-    heuristics_components: Vec<relm4::Controller<PowerProfileHeuristicsList>>,
 }
 
 #[derive(Debug)]
@@ -65,6 +62,7 @@ pub enum PowerFrameMsg {
         supported: Option<Vec<PowerMizerMode>>,
     },
     SettingsChanged,
+    RefreshVisibility,
     Reset,
 }
 
@@ -81,7 +79,7 @@ impl relm4::Component for PowerFrame {
             set_name: fl!(I18N, "power-section"),
             set_hide_visible_container: true,
             #[watch]
-            set_visible: !model.rows.is_empty(),
+            set_visible: !model.rows.is_empty() || model.performance_frame.widget().power_profile.get_visible(),
 
             append_header = &gtk::Button {
                 set_label: &fl!(I18N, "default-button"),
@@ -105,16 +103,27 @@ impl relm4::Component for PowerFrame {
                 .launch(AdjustmentCard::init(()).content.clone())
                 .forward(sender.input_sender(), |()| PowerFrameMsg::SettingsChanged),
             performance_levels: PERFORMANCE_LEVELS.to_vec(),
-            power_profile_modes_table: None,
+            performance_frame: PerformanceFrame::launch_default()
+                .forward(sender.output_sender(), |msg| msg),
             supported_power_mizer_modes: Vec::new(),
-            heuristics_notebook: gtk::Notebook::new(),
-            heuristics_components: Vec::new(),
         };
+        let row = &model.performance_frame.widget().power_profile;
+        model.rows.widget().append(row);
+        let visibility_sender = sender.clone();
+        row.connect_visible_notify(move |_| {
+            visibility_sender.input(PowerFrameMsg::RefreshVisibility);
+        });
         let widgets = view_output!();
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
+    fn update_with_view(
+        &mut self,
+        widgets: &mut Self::Widgets,
+        msg: Self::Input,
+        sender: ComponentSender<Self>,
+        _root: &Self::Root,
+    ) {
         match msg {
             PowerFrameMsg::PowerStats(power) => {
                 self.rows.remove(&PowerSetting::PowerCap);
@@ -165,14 +174,14 @@ impl relm4::Component for PowerFrame {
                                     .iter()
                                     .position(|candidate| *candidate == level)
                                     .map(|index| index as u32),
-                                ..Default::default()
                             }
                             .into(),
                             ..Default::default()
                         },
                     );
                 }
-                let _ = sender.output(OcPageMsg::PerformanceLevelChanged);
+                self.performance_frame
+                    .emit(PerformanceFrameMsg::PerformanceLevel(level));
             }
             PowerFrameMsg::SetPerformanceLevel(level) => {
                 if self.rows.get(&PowerSetting::PerformanceLevel).is_some()
@@ -188,40 +197,8 @@ impl relm4::Component for PowerFrame {
                 }
             }
             PowerFrameMsg::PowerProfileModes(table) => {
-                self.rows.remove(&PowerSetting::PowerProfile);
-                self.heuristics_components.clear();
-                self.heuristics_notebook = gtk::Notebook::new();
-                if let Some(table) = &table {
-                    self.rows.insert(
-                        PowerSetting::PowerProfile,
-                        SettingRowInit {
-                            info_text: fl!(I18N, "manual-level-needed"),
-                            title: fl!(I18N, "power-profile-mode"),
-                            control: SelectInit {
-                                options: table
-                                    .modes
-                                    .values()
-                                    .map(|mode| mode.name.clone().into())
-                                    .collect(),
-                                selected: table
-                                    .modes
-                                    .keys()
-                                    .position(|key| *key == table.active)
-                                    .map(|index| index as u32),
-                                details: table
-                                    .modes
-                                    .values()
-                                    .any(|mode| !mode.components.is_empty())
-                                    .then(|| self.heuristics_notebook.clone().upcast()),
-                                ..Default::default()
-                            }
-                            .into(),
-                            ..Default::default()
-                        },
-                    );
-                }
-                self.power_profile_modes_table = table;
-                self.update_heuristics();
+                self.performance_frame
+                    .emit(PerformanceFrameMsg::PowerProfileModes(table));
             }
             PowerFrameMsg::PowerMizerInfo { active, supported } => {
                 self.rows.remove(&PowerSetting::PowerMizer);
@@ -251,7 +228,6 @@ impl relm4::Component for PowerFrame {
                                     .iter()
                                     .position(|mode| *mode == active)
                                     .map(|index| index as u32),
-                                ..Default::default()
                             }
                             .into(),
                             ..Default::default()
@@ -260,17 +236,13 @@ impl relm4::Component for PowerFrame {
                 }
             }
             PowerFrameMsg::SettingsChanged => {
-                if let Some(selected) = self.selected(PowerSetting::PowerProfile)
-                    && let Some(table) = &mut self.power_profile_modes_table
-                    && let Some(key) = table.modes.keys().nth(selected as usize).copied()
-                    && table.active != key
-                {
-                    table.active = key;
-                    self.update_heuristics();
-                }
                 APP_BROKER.send(AppMsg::SettingsChanged);
-                let _ = sender.output(OcPageMsg::PerformanceLevelChanged);
+                self.performance_frame
+                    .emit(PerformanceFrameMsg::PerformanceLevel(
+                        self.performance_level(),
+                    ));
             }
+            PowerFrameMsg::RefreshVisibility => (),
             PowerFrameMsg::Reset => {
                 if self.rows.get(&PowerSetting::PowerCap).is_some() {
                     self.rows
@@ -279,36 +251,34 @@ impl relm4::Component for PowerFrame {
             }
         }
 
-        let manual = self.performance_level() == Some(PerformanceLevel::Manual);
-        if self.rows.get(&PowerSetting::PowerProfile).is_some() {
-            self.rows.send(
-                &PowerSetting::PowerProfile,
-                SettingRowMsg::SetSensitive(manual),
-            );
-        }
-        let custom = self
-            .power_profile_modes_table
-            .as_ref()
-            .and_then(|table| table.modes.get(&table.active))
-            .is_some_and(|mode| mode.is_custom());
-        self.heuristics_notebook.set_sensitive(manual && custom);
-
         // Hash-map factories append replacements; keep the card in setting order.
-        let mut order = self
+        let order = self
             .rows
             .iter()
-            .map(|(key, row)| (*key, row.widget().clone()))
+            .map(|(key, row)| {
+                let order = match key {
+                    PowerSetting::PowerCap => 0,
+                    PowerSetting::PerformanceLevel => 1,
+                    PowerSetting::PowerMizer => 3,
+                };
+                (order, row.widget().clone())
+            })
             .collect::<Vec<_>>();
-        order.sort_by_key(|(key, _)| *key);
+        let profile_row = self.performance_frame.widget().power_profile.clone();
         self.rows.widget().set_sort_func(move |left, right| {
             let position = |row: &gtk::ListBoxRow| {
+                if row == &profile_row {
+                    return 2;
+                }
                 order
                     .iter()
-                    .position(|(_, widget)| row.child().as_ref() == Some(widget.upcast_ref()))
+                    .find(|(_, widget)| row.child().as_ref() == Some(widget.upcast_ref()))
+                    .map(|(order, _)| *order)
                     .unwrap_or(usize::MAX)
             };
             position(left).cmp(&position(right)).into()
         });
+        self.update_view(widgets, sender);
     }
 }
 
@@ -316,16 +286,7 @@ impl PowerFrame {
     pub fn serialize(&self) -> GpuConfig {
         let value = |setting| self.rows.get(&setting).and_then(SettingRow::serialize);
         let selected = |setting| value(setting).and_then(SettingRowValue::as_selected);
-        let power_profile_mode_index = selected(PowerSetting::PowerProfile)
-            .filter(|_| self.performance_level() == Some(PerformanceLevel::Manual))
-            .and_then(|index| {
-                self.power_profile_modes_table
-                    .as_ref()?
-                    .modes
-                    .keys()
-                    .nth(index as usize)
-                    .copied()
-            });
+        let power_profile_mode_index = self.performance_frame.model().power_profile_mode();
         GpuConfig {
             power_cap: value(PowerSetting::PowerCap).and_then(SettingRowValue::as_numeric),
             performance_level: selected(PowerSetting::PerformanceLevel)
@@ -337,7 +298,9 @@ impl PowerFrame {
             }),
             power_profile_mode_index,
             custom_power_profile_mode_hueristics: if power_profile_mode_index.is_some() {
-                self.power_profile_mode_custom_heuristics()
+                self.performance_frame
+                    .model()
+                    .power_profile_mode_custom_heuristics()
             } else {
                 Vec::new()
             },
@@ -349,49 +312,10 @@ impl PowerFrame {
         self.rows.get(&setting)?.get_value().as_selected()
     }
 
-    fn update_heuristics(&mut self) {
-        while self.heuristics_notebook.n_pages() > 0 {
-            self.heuristics_notebook.remove_page(Some(0));
-        }
-        self.heuristics_components.clear();
-        if let Some(table) = &self.power_profile_modes_table
-            && let Some(active) = table.modes.get(&table.active)
-        {
-            for component in &active.components {
-                let list = PowerProfileHeuristicsList::builder()
-                    .launch((component.values.clone(), table.value_names.clone()))
-                    .detach();
-                self.heuristics_notebook.append_page(
-                    list.widget(),
-                    Some(&gtk::Label::new(Some(
-                        component.clock_type.as_deref().unwrap_or("All"),
-                    ))),
-                );
-                self.heuristics_components.push(list);
-            }
-        }
-        self.heuristics_notebook
-            .set_show_tabs(self.heuristics_components.len() > 1);
-    }
-
     pub fn performance_level(&self) -> Option<PerformanceLevel> {
         self.performance_levels
             .get(self.selected(PowerSetting::PerformanceLevel)? as usize)
             .copied()
-    }
-
-    fn power_profile_mode_custom_heuristics(&self) -> Vec<Vec<Option<i32>>> {
-        if let Some(table) = &self.power_profile_modes_table
-            && let Some(mode) = table.modes.get(&table.active)
-            && mode.is_custom()
-        {
-            self.heuristics_components
-                .iter()
-                .map(|list| list.model().get_values())
-                .collect()
-        } else {
-            Vec::new()
-        }
     }
 }
 

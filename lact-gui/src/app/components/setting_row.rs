@@ -208,16 +208,6 @@ impl SettingControl {
             Self::Select(control) => control.emit(SelectControlMsg::Reset),
         }
     }
-
-    fn set_sensitive(&self, sensitive: bool) {
-        match self {
-            Self::Adjustment(control) => {
-                control.emit(AdjustmentControlMsg::SetSensitive(sensitive))
-            }
-            Self::Boolean(control) => control.emit(BooleanControlMsg::SetSensitive(sensitive)),
-            Self::Select(control) => control.emit(SelectControlMsg::SetSensitive(sensitive)),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -225,8 +215,6 @@ pub enum SettingRowMsg {
     Reset,
     SetValue(SettingRowValue),
     SetVisible(bool),
-    /// Enable editing while leaving informational popovers accessible.
-    SetSensitive(bool),
 }
 
 #[relm4::factory(pub)]
@@ -270,7 +258,6 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
         match msg {
             SettingRowMsg::Reset => self.control.reset(),
             SettingRowMsg::SetValue(value) => self.set_value(value),
-            SettingRowMsg::SetSensitive(sensitive) => self.control.set_sensitive(sensitive),
             SettingRowMsg::SetVisible(visible) => {
                 self.control.set_visible(visible);
                 widgets.root_row.set_visible(visible);

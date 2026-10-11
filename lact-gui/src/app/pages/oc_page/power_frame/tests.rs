@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::test_utils::{assert_silent, find_widget, receive, wait_for};
 use amdgpu_sysfs::gpu_handle::power_profile_mode::{PowerProfile, PowerProfileComponent};
+use relm4::Component;
 use std::collections::BTreeMap;
 
 #[test]
@@ -31,7 +32,7 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
         PowerProfileModesTable {
             modes: BTreeMap::from([
                 (
-                    1,
+                    0,
                     PowerProfile {
                         name: "BOOTUP_DEFAULT".into(),
                         components: vec![PowerProfileComponent {
@@ -41,7 +42,7 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
                     },
                 ),
                 (
-                    7,
+                    1,
                     PowerProfile {
                         name: "CUSTOM".into(),
                         components: vec![PowerProfileComponent {
@@ -52,7 +53,7 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
                 ),
             ]),
             value_names: vec!["Threshold".into()],
-            active: 7,
+            active: 1,
         },
     )));
     drain();
@@ -62,14 +63,25 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
         OcPageMsg::PerformanceLevelChanged
     ));
     assert_silent(&context, &receiver);
-    assert_eq!(frame.model().rows.len(), 3);
+    assert_eq!(frame.model().rows.len(), 2);
     assert_eq!(serialize(&frame).power_cap, Some(150.0));
-    let profile = dropdown(&frame, PowerSetting::PowerProfile);
+    let profile = frame
+        .model()
+        .performance_frame
+        .widgets()
+        .modes_listbox
+        .clone();
+    let heuristics = frame
+        .model()
+        .performance_frame
+        .widgets()
+        .heuristics_notebook
+        .clone();
     let performance = dropdown(&frame, PowerSetting::PerformanceLevel);
-    assert_eq!(profile.selected(), 1);
+    assert_eq!(profile.selected_row().unwrap().index(), 1);
     assert!(!profile.is_sensitive());
     assert_eq!(serialize(&frame).power_profile_mode_index, None);
-    assert!(!frame.model().heuristics_notebook.is_sensitive());
+    assert!(heuristics.nth_page(Some(0)).unwrap().is_sensitive());
 
     let cap = frame.model().rows[&PowerSetting::PowerCap].widget().clone();
     let spin = find_widget::<gtk::SpinButton>(cap.upcast_ref()).unwrap();
@@ -92,9 +104,9 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
         frame.model().performance_level(),
         Some(PerformanceLevel::Manual)
     );
-    assert_eq!(serialize(&frame).power_profile_mode_index, Some(7));
+    assert_eq!(serialize(&frame).power_profile_mode_index, Some(1));
     assert!(profile.is_sensitive());
-    assert!(frame.model().heuristics_notebook.is_sensitive());
+    assert!(heuristics.nth_page(Some(0)).unwrap().is_sensitive());
     assert_eq!(
         serialize(&frame).custom_power_profile_mode_hueristics,
         vec![vec![Some(20)]]
@@ -103,22 +115,22 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
     drain();
     assert_eq!(serialize(&frame).power_cap, Some(175.0));
 
-    profile.set_selected(0);
+    profile.select_row(profile.row_at_index(0).as_ref());
     wait_for(&context, || {
-        !frame.model().heuristics_notebook.is_sensitive()
+        !heuristics.nth_page(Some(0)).unwrap().is_sensitive()
     });
-    assert_eq!(serialize(&frame).power_profile_mode_index, Some(1));
-    assert!(!frame.model().heuristics_notebook.is_sensitive());
+    assert_eq!(serialize(&frame).power_profile_mode_index, Some(0));
+    assert!(!heuristics.nth_page(Some(0)).unwrap().is_sensitive());
     assert!(
         serialize(&frame)
             .custom_power_profile_mode_hueristics
             .is_empty()
     );
-    profile.set_selected(1);
+    profile.select_row(profile.row_at_index(1).as_ref());
     wait_for(&context, || {
-        frame.model().heuristics_notebook.is_sensitive()
+        heuristics.nth_page(Some(0)).unwrap().is_sensitive()
     });
-    assert_eq!(serialize(&frame).power_profile_mode_index, Some(7));
+    assert_eq!(serialize(&frame).power_profile_mode_index, Some(1));
     assert_eq!(
         serialize(&frame).custom_power_profile_mode_hueristics,
         vec![vec![Some(20)]]
@@ -138,11 +150,7 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
     );
     assert_order(
         &frame,
-        &[
-            PowerSetting::PowerCap,
-            PowerSetting::PerformanceLevel,
-            PowerSetting::PowerProfile,
-        ],
+        &[PowerSetting::PowerCap, PowerSetting::PerformanceLevel],
     );
     frame.emit(PowerFrameMsg::Reset);
     drain();
@@ -167,7 +175,10 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
     assert_eq!(frame.model().rows.len(), 2);
     assert_eq!(serialize(&frame).power_cap, Some(150.0));
     assert_eq!(frame.model().performance_level(), None);
-    assert!(frame.model().heuristics_components.is_empty());
+    assert_eq!(heuristics.n_pages(), 0);
+    assert!(profile.selected_row().is_none());
+    assert!(profile.row_at_index(0).is_none());
+    assert_eq!(serialize(&frame).power_profile_mode_index, None);
     assert_eq!(
         serialize(&frame).power_mizer_mode,
         Some(PowerMizerMode::Adaptive)
@@ -223,16 +234,13 @@ fn dropdown(frame: &relm4::Controller<PowerFrame>, setting: PowerSetting) -> gtk
 }
 
 fn assert_order(frame: &relm4::Controller<PowerFrame>, settings: &[PowerSetting]) {
+    let visible_rows = (0..)
+        .map_while(|index| frame.model().rows.widget().row_at_index(index))
+        .filter(|row| row.get_visible())
+        .collect::<Vec<_>>();
     for (index, setting) in settings.iter().enumerate() {
         assert_eq!(
-            frame
-                .model()
-                .rows
-                .widget()
-                .row_at_index(index as i32)
-                .unwrap()
-                .child()
-                .as_ref(),
+            visible_rows[index].child().as_ref(),
             Some(frame.model().rows[setting].widget().upcast_ref()),
             "expected {setting:?} at position {index}",
         );

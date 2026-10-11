@@ -1,6 +1,7 @@
 mod card_layout;
 mod clocks_frame;
 mod igpu_frame;
+mod performance_frame;
 mod power_frame;
 mod power_states;
 mod vf_curve;

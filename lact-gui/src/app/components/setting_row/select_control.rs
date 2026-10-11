@@ -23,8 +23,6 @@ pub struct SelectInit {
     /// Index into `options`. Missing or invalid indices select the first option.
     pub selected: Option<u32>,
     pub default_value: Option<u32>,
-    /// Optional editor or details for the selected option.
-    pub details: Option<gtk::Widget>,
 }
 
 pub struct SelectControl {
@@ -40,8 +38,6 @@ pub enum SelectControlMsg {
     Changed,
     Reset,
     SetVisible(bool),
-    /// Enable selection changes while keeping the details popover accessible.
-    SetSensitive(bool),
 }
 
 #[relm4::component(pub)]
@@ -87,15 +83,6 @@ impl Component for SelectControl {
                 add_binding: (model.value.binding(), "selected"),
             },
 
-            gtk::MenuButton {
-                set_valign: gtk::Align::Center,
-                set_icon_name: "view-more-symbolic",
-                set_visible: init.details.is_some(),
-                #[wrap(Some)]
-                set_popover = &gtk::Popover {
-                    set_child: init.details.as_ref(),
-                },
-            },
         },
     }
 
@@ -146,7 +133,6 @@ impl Component for SelectControl {
                 let _ = sender.output(());
             }
             SelectControlMsg::Reset => self.value.reset(),
-            SelectControlMsg::SetSensitive(sensitive) => widgets.dropdown.set_sensitive(sensitive),
             SelectControlMsg::SetVisible(visible) => {
                 if root.get_visible() != visible {
                     for (group, widget) in &self.size_group_widgets {

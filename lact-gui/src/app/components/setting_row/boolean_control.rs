@@ -19,7 +19,6 @@ pub enum BooleanControlMsg {
     Changed,
     Reset,
     SetVisible(bool),
-    SetSensitive(bool),
 }
 
 #[relm4::component(pub)]
@@ -77,7 +76,7 @@ impl Component for BooleanControl {
 
     fn update_with_view(
         &mut self,
-        widgets: &mut Self::Widgets,
+        _widgets: &mut Self::Widgets,
         msg: Self::Input,
         sender: ComponentSender<Self>,
         root: &Self::Root,
@@ -87,7 +86,6 @@ impl Component for BooleanControl {
                 let _ = sender.output(());
             }
             BooleanControlMsg::Reset => self.value.reset(),
-            BooleanControlMsg::SetSensitive(sensitive) => widgets.switch.set_sensitive(sensitive),
             BooleanControlMsg::SetVisible(visible) => {
                 if root.get_visible() != visible {
                     for (group, widget) in &self.size_group_widgets {
