@@ -263,17 +263,6 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
         }
     }
 
-    fn init_widgets(
-        &mut self,
-        _index: &Self::Index,
-        root: Self::Root,
-        _returned_widget: &gtk::ListBoxRow,
-        _sender: FactorySender<Self>,
-    ) -> Self::Widgets {
-        let widgets = view_output!();
-        widgets
-    }
-
     fn update_with_view(
         &mut self,
         widgets: &mut Self::Widgets,
