@@ -14,8 +14,8 @@ pub use self::{
 };
 use adw::prelude::*;
 use relm4::{
-    Component, ComponentController, Controller, FactorySender, RelmWidgetExt, css,
-    factory::FactoryComponent, view,
+    Component, ComponentController, Controller, FactorySender, RelmWidgetExt, WidgetTemplate, css,
+    factory::FactoryComponent,
 };
 use std::marker::PhantomData;
 
@@ -164,7 +164,13 @@ pub enum SettingControl {
 }
 
 impl SettingControl {
-    fn new(init: SettingRowInit, title: gtk::Box, output: &relm4::Sender<()>) -> Self {
+    fn new(init: SettingRowInit, output: &relm4::Sender<()>) -> Self {
+        let title = SettingTitle::init(SettingTitleInit {
+            title: init.title,
+            tooltip: init.title_tooltip,
+            info_text: init.info_text,
+        })
+        .root;
         let label_group = init.label_group;
         let input_group = init.input_group;
         match init.control {
@@ -256,9 +262,8 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
     }
 
     fn init_model(init: Self::Init, _index: &Self::Index, sender: FactorySender<Self>) -> Self {
-        let title = init.title_widget();
         Self {
-            control: SettingControl::new(init, title, sender.output_sender()),
+            control: SettingControl::new(init, sender.output_sender()),
             _key: PhantomData,
         }
     }
@@ -281,48 +286,55 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
     }
 }
 
-impl SettingRowInit {
-    fn title_widget(&self) -> gtk::Box {
-        view! {
-            title = gtk::Box {
-                set_orientation: gtk::Orientation::Horizontal,
+struct SettingTitleInit {
+    title: String,
+    tooltip: String,
+    info_text: String,
+}
+
+#[relm4::widget_template]
+impl WidgetTemplate for SettingTitle {
+    type Init = SettingTitleInit;
+
+    view! {
+        #[name = "root"]
+        gtk::Box {
+            set_orientation: gtk::Orientation::Horizontal,
+            set_valign: gtk::Align::Center,
+            set_hexpand: true,
+            set_spacing: 5,
+
+            gtk::Label {
                 set_valign: gtk::Align::Center,
-                set_hexpand: true,
-                set_spacing: 5,
+                set_xalign: 0.0,
+                set_markup: &init.title,
+                set_tooltip_text: (!init.tooltip.is_empty()).then_some(init.tooltip.as_str()),
+            },
+            gtk::Box {
+                add_css_class: css::CAPTION,
+                set_valign: gtk::Align::End,
 
-                gtk::Label {
-                    set_valign: gtk::Align::Center,
-                    set_xalign: 0.0,
-                    set_markup: &self.title,
-                    set_tooltip_text: (!self.title_tooltip.is_empty()).then_some(self.title_tooltip.as_str()),
-                },
-                gtk::Box {
-                    add_css_class: css::CAPTION,
-                    set_valign: gtk::Align::End,
-
-                    gtk::MenuButton {
-                        set_visible: !self.info_text.is_empty(),
-                        add_css_class: css::FLAT,
-                        #[wrap(Some)]
-                        set_popover = &gtk::Popover {
-                            gtk::Label {
-                                set_label: &self.info_text,
-                                set_margin_all: 5,
-                                set_wrap: true,
-                                set_wrap_mode: gtk::pango::WrapMode::Word,
-                                set_max_width_chars: 55,
-                            },
+                gtk::MenuButton {
+                    set_visible: !init.info_text.is_empty(),
+                    add_css_class: css::FLAT,
+                    #[wrap(Some)]
+                    set_popover = &gtk::Popover {
+                        gtk::Label {
+                            set_label: &init.info_text,
+                            set_margin_all: 5,
+                            set_wrap: true,
+                            set_wrap_mode: gtk::pango::WrapMode::Word,
+                            set_max_width_chars: 55,
                         },
-                        #[wrap(Some)]
-                        set_child = &gtk::Image {
-                            set_icon_name: Some("info-outline-symbolic"),
-                            set_pixel_size: 12,
-                        },
+                    },
+                    #[wrap(Some)]
+                    set_child = &gtk::Image {
+                        set_icon_name: Some("info-outline-symbolic"),
+                        set_pixel_size: 12,
                     },
                 },
             },
-        }
-        title
+        },
     }
 }
 
