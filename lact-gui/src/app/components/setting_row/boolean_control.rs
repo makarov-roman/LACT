@@ -1,4 +1,4 @@
-use super::super::{boolean_value::BooleanValue, setting_value::SettingValue};
+use super::{boolean_value::BooleanValue, setting_value::SettingValue};
 use gtk::prelude::*;
 use relm4::{Component, ComponentParts, ComponentSender, binding::ConnectBinding};
 

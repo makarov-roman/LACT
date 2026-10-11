@@ -1,4 +1,4 @@
-use super::super::{select_value::SelectValue, setting_value::SettingValue};
+use super::{select_value::SelectValue, setting_value::SettingValue};
 use gtk::prelude::*;
 use relm4::{Component, ComponentParts, ComponentSender, RelmObjectExt, css};
 

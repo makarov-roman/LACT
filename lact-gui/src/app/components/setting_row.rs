@@ -1,13 +1,17 @@
 mod adjustment_control;
+mod adjustment_value;
 mod boolean_control;
+mod boolean_value;
 mod select_control;
+mod select_value;
+mod setting_value;
 
+use self::setting_value::SettingValue;
 pub use self::{
     adjustment_control::{AdjustmentControl, AdjustmentControlMsg, AdjustmentInit},
     boolean_control::{BooleanControl, BooleanControlMsg, BooleanInit},
     select_control::{SelectControl, SelectControlMsg, SelectInit, SelectOption},
 };
-use super::setting_value::SettingValue;
 use adw::prelude::*;
 use relm4::{
     Component, ComponentController, Controller, FactorySender, RelmWidgetExt, css,

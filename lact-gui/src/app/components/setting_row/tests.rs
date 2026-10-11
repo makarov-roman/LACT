@@ -1,8 +1,5 @@
-use super::*;
-use crate::app::{
-    components::{adjustment_value::AdjustmentValue, setting_value::SettingValue},
-    test_utils::{assert_silent, find_widget, receive},
-};
+use super::{adjustment_value::AdjustmentValue, *};
+use crate::app::test_utils::{assert_silent, find_widget, receive};
 use relm4::{binding::Binding, factory::FactoryHashMap};
 use std::{cell::Cell, rc::Rc};
 
@@ -36,15 +33,16 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
         .forward(&output, |()| ());
     rows.insert(
         (),
-        SettingRowInit::new(
-            String::new(),
-            AdjustmentInit {
+        SettingRowInit {
+            control: AdjustmentInit {
                 value: 250.0,
                 default_value: Some(25.0),
                 upper: 200.0,
                 ..Default::default()
-            },
-        ),
+            }
+            .into(),
+            ..Default::default()
+        },
     );
     drain(context);
     assert_eq!(rows[&()].get_value(), SettingRowValue::Numeric(200.0));
@@ -136,13 +134,13 @@ fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainCont
         SettingRowInit {
             label_group: Some(groups[0].clone()),
             input_group: Some(groups[1].clone()),
-            ..SettingRowInit::new(
-                "Enabled".into(),
-                BooleanInit {
-                    value: true,
-                    default_value: Some(false),
-                },
-            )
+            title: "Enabled".into(),
+            control: BooleanInit {
+                value: true,
+                default_value: Some(false),
+            }
+            .into(),
+            ..Default::default()
         },
     );
     rows.insert(
@@ -150,17 +148,17 @@ fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainCont
         SettingRowInit {
             label_group: Some(groups[0].clone()),
             input_group: Some(groups[1].clone()),
-            ..SettingRowInit::new(
-                "Temperature".into(),
-                AdjustmentInit {
-                    value: 50.0,
-                    default_value: Some(25.0),
-                    upper: 100.0,
-                    lower_label_group: Some(groups[2].clone()),
-                    upper_label_group: Some(groups[3].clone()),
-                    ..Default::default()
-                },
-            )
+            title: "Temperature".into(),
+            control: AdjustmentInit {
+                value: 50.0,
+                default_value: Some(25.0),
+                upper: 100.0,
+                lower_label_group: Some(groups[2].clone()),
+                upper_label_group: Some(groups[3].clone()),
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
         },
     );
     drain(context);
@@ -234,7 +232,11 @@ fn row_forwards_edits_and_shuts_down_replaced_controls(context: &gtk::glib::Main
         .forward(&output, |()| ());
     rows.insert(
         (),
-        SettingRowInit::new("Enabled".into(), BooleanInit::default()),
+        SettingRowInit {
+            title: "Enabled".into(),
+            control: BooleanInit::default().into(),
+            ..Default::default()
+        },
     );
     drain(context);
     assert_silent(context, &receiver);
@@ -243,14 +245,16 @@ fn row_forwards_edits_and_shuts_down_replaced_controls(context: &gtk::glib::Main
     receive(context, &receiver);
     rows.insert(
         (),
-        SettingRowInit::new(
-            "Limit".into(),
-            AdjustmentInit {
+        SettingRowInit {
+            title: "Limit".into(),
+            control: AdjustmentInit {
                 value: 50.0,
                 upper: 100.0,
                 ..Default::default()
-            },
-        ),
+            }
+            .into(),
+            ..Default::default()
+        },
     );
     drain(context);
 
@@ -274,24 +278,24 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
         SettingRowInit {
             label_group: Some(groups[0].clone()),
             input_group: Some(groups[1].clone()),
-            ..SettingRowInit::new(
-                "Mode".into(),
-                SelectInit {
-                    options: vec![
-                        SelectOption {
-                            label: "Auto".into(),
-                            description: "Automatic clocks".into(),
-                        },
-                        SelectOption {
-                            label: "Manual".into(),
-                            description: "Manual clocks".into(),
-                        },
-                    ],
-                    selected: Some(1),
-                    default_value: Some(0),
-                    ..Default::default()
-                },
-            )
+            title: "Mode".into(),
+            control: SelectInit {
+                options: vec![
+                    SelectOption {
+                        label: "Auto".into(),
+                        description: "Automatic clocks".into(),
+                    },
+                    SelectOption {
+                        label: "Manual".into(),
+                        description: "Manual clocks".into(),
+                    },
+                ],
+                selected: Some(1),
+                default_value: Some(0),
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
         },
     );
     drain(context);
@@ -336,7 +340,11 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
     drain(context);
     rows.insert(
         (),
-        SettingRowInit::new("Unavailable".into(), SelectInit::default()),
+        SettingRowInit {
+            title: "Unavailable".into(),
+            control: SelectInit::default().into(),
+            ..Default::default()
+        },
     );
     drain(context);
     assert!(groups.iter().all(|group| group.widgets().is_empty()));
@@ -351,15 +359,17 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
     // Match GTK's fallback selection without marking initialization as an edit.
     rows.insert(
         (),
-        SettingRowInit::new(
-            "Unknown".into(),
-            SelectInit {
+        SettingRowInit {
+            title: "Unknown".into(),
+            control: SelectInit {
                 options: vec!["Auto".to_owned().into()],
                 selected: Some(10),
                 default_value: Some(10),
                 ..Default::default()
-            },
-        ),
+            }
+            .into(),
+            ..Default::default()
+        },
     );
     drain(context);
     let dropdown = find_widget::<gtk::DropDown>(rows.widget().upcast_ref()).unwrap();
