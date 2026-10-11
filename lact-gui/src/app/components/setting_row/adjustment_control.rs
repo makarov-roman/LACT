@@ -41,7 +41,7 @@ pub struct AdjustmentControl {
 #[derive(Debug)]
 pub enum AdjustmentControlMsg {
     Changed,
-    /// Change numeric display units and reset the edit state.
+    /// Change numeric display units, retaining the value and edit state.
     SetValueRatio(f64),
     Reset,
     SetVisible(bool),

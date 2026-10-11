@@ -1157,6 +1157,14 @@ impl AppModel {
             .ok()
             .flatten();
 
+        self.thermals_page.emit(ThermalsPageMsg::FanControlInterval(
+            gpu_config
+                .as_ref()
+                .and_then(|config| config.fan_control_settings.as_ref())
+                .map(|settings| settings.interval_ms)
+                .unwrap_or_else(|| lact_schema::config::FanControlSettings::default().interval_ms),
+        ));
+
         let info = self
             .daemon_client
             .get_device_info(&gpu_id, Some(false))
@@ -1243,55 +1251,23 @@ impl AppModel {
     ) -> anyhow::Result<()> {
         debug!("applying settings on gpu {gpu_id}");
 
-        let mut gpu_config = self
-            .daemon_client
-            .get_gpu_config(&gpu_id)
-            .await
-            .context("Could not get gpu config")?
-            .unwrap_or_else(GpuConfig::default);
-
-        let cap = self.oc_page.model().get_power_cap();
-        if let Some(cap) = cap {
-            gpu_config.power_cap = Some(cap);
-        }
-
-        let performance_level = self.oc_page.model().get_performance_level();
-        if let Some(level) = performance_level {
-            gpu_config.performance_level = Some(level);
-            gpu_config.power_profile_mode_index = self.oc_page.model().get_power_profile_mode();
-
-            gpu_config.custom_power_profile_mode_hueristics = self
-                .oc_page
-                .model()
-                .get_power_profile_mode_custom_heuristics();
-        }
-
-        if let Some(mode) = self.oc_page.model().get_active_power_mizer_mode() {
-            gpu_config.power_mizer_mode = Some(mode);
-        }
-
-        self.thermals_page.model().apply_config(&mut gpu_config);
-
-        self.oc_page
-            .model()
-            .apply_clocks_config(&mut gpu_config.clocks_configuration);
-
-        if self.device_driver == "nvidia" && !CONFIG.read().experimental_nvidia_pstate_offsets {
-            let clocks = &mut gpu_config.clocks_configuration;
-            clocks.gpu_clock_offsets.retain(|pstate, _| *pstate == 0);
-            clocks.mem_clock_offsets.retain(|pstate, _| *pstate == 0);
-        }
-
-        let enabled_power_states = self.oc_page.model().get_enabled_power_states();
-        gpu_config.power_states = enabled_power_states;
-
-        // Avoids applying the setting if it's the default but doesn't wipe it if it's unchanged in the UI
-        gpu_config.uma_carveout = self
-            .oc_page
-            .model()
-            .get_uma_carveout()
-            .map(|value| value as usize)
-            .or(gpu_config.uma_carveout);
+        let oc = self.oc_page.model().serialize();
+        let (fan_control_settings, pmfw_options, nvidia_thermal_options) =
+            self.thermals_page.model().serialize();
+        let gpu_config = GpuConfig {
+            fan_control_enabled: fan_control_settings.is_some(),
+            fan_control_settings,
+            pmfw_options,
+            nvidia_thermal_options,
+            power_cap: oc.power_cap,
+            performance_level: oc.performance_level,
+            power_mizer_mode: oc.power_mizer_mode,
+            power_profile_mode_index: oc.power_profile_mode_index,
+            custom_power_profile_mode_hueristics: oc.custom_power_profile_mode_hueristics,
+            clocks_configuration: oc.clocks_configuration,
+            power_states: oc.power_states,
+            uma_carveout: oc.uma_carveout,
+        };
 
         let delay = self
             .daemon_client

@@ -63,18 +63,12 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
     ));
     assert_silent(&context, &receiver);
     assert_eq!(frame.model().rows.len(), 3);
-    assert!(
-        frame
-            .model()
-            .rows
-            .values()
-            .all(|row| row.get_changed_value().is_none())
-    );
+    assert_eq!(serialize(&frame).power_cap, Some(150.0));
     let profile = dropdown(&frame, PowerSetting::PowerProfile);
     let performance = dropdown(&frame, PowerSetting::PerformanceLevel);
     assert_eq!(profile.selected(), 1);
     assert!(!profile.is_sensitive());
-    assert_eq!(frame.model().power_profile_mode(), None);
+    assert_eq!(serialize(&frame).power_profile_mode_index, None);
     assert!(!frame.model().heuristics_notebook.is_sensitive());
 
     let cap = frame.model().rows[&PowerSetting::PowerCap].widget().clone();
@@ -91,43 +85,42 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
         performance
     );
     assert_eq!(
-        frame.model().rows[&PowerSetting::PerformanceLevel].get_changed_value(),
+        frame.model().rows[&PowerSetting::PerformanceLevel].serialize(),
         Some(SettingRowValue::Selected(Some(3)))
     );
     assert_eq!(
         frame.model().performance_level(),
         Some(PerformanceLevel::Manual)
     );
-    assert_eq!(frame.model().power_profile_mode(), Some(7));
+    assert_eq!(serialize(&frame).power_profile_mode_index, Some(7));
     assert!(profile.is_sensitive());
     assert!(frame.model().heuristics_notebook.is_sensitive());
     assert_eq!(
-        frame.model().power_profile_mode_custom_heuristics(),
+        serialize(&frame).custom_power_profile_mode_hueristics,
         vec![vec![Some(20)]]
     );
     spin.set_value(175.0);
     drain();
-    assert_eq!(frame.model().get_user_cap(), Some(175.0));
+    assert_eq!(serialize(&frame).power_cap, Some(175.0));
 
     profile.set_selected(0);
     wait_for(&context, || {
         !frame.model().heuristics_notebook.is_sensitive()
     });
-    assert_eq!(frame.model().power_profile_mode(), Some(1));
+    assert_eq!(serialize(&frame).power_profile_mode_index, Some(1));
     assert!(!frame.model().heuristics_notebook.is_sensitive());
     assert!(
-        frame
-            .model()
-            .power_profile_mode_custom_heuristics()
+        serialize(&frame)
+            .custom_power_profile_mode_hueristics
             .is_empty()
     );
     profile.set_selected(1);
     wait_for(&context, || {
         frame.model().heuristics_notebook.is_sensitive()
     });
-    assert_eq!(frame.model().power_profile_mode(), Some(7));
+    assert_eq!(serialize(&frame).power_profile_mode_index, Some(7));
     assert_eq!(
-        frame.model().power_profile_mode_custom_heuristics(),
+        serialize(&frame).custom_power_profile_mode_hueristics,
         vec![vec![Some(20)]]
     );
 
@@ -135,9 +128,14 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
         PerformanceLevel::High,
     )));
     drain();
-    assert_eq!(frame.model().get_user_cap(), Some(175.0));
+    assert_eq!(serialize(&frame).power_cap, Some(175.0));
     assert!(!profile.is_sensitive());
-    assert_eq!(frame.model().power_profile_mode(), None);
+    assert_eq!(serialize(&frame).power_profile_mode_index, None);
+    assert!(
+        serialize(&frame)
+            .custom_power_profile_mode_hueristics
+            .is_empty()
+    );
     assert_order(
         &frame,
         &[
@@ -148,7 +146,7 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
     );
     frame.emit(PowerFrameMsg::Reset);
     drain();
-    assert_eq!(frame.model().get_user_cap(), Some(125.0));
+    assert_eq!(serialize(&frame).power_cap, None);
     assert_eq!(
         frame.model().performance_level(),
         Some(PerformanceLevel::High)
@@ -167,11 +165,11 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
     });
     drain();
     assert_eq!(frame.model().rows.len(), 2);
-    assert_eq!(frame.model().get_user_cap(), None);
+    assert_eq!(serialize(&frame).power_cap, Some(150.0));
     assert_eq!(frame.model().performance_level(), None);
     assert!(frame.model().heuristics_components.is_empty());
     assert_eq!(
-        frame.model().active_power_mizer_mode(),
+        serialize(&frame).power_mizer_mode,
         Some(PowerMizerMode::Adaptive)
     );
     let mizer = dropdown(&frame, PowerSetting::PowerMizer);
@@ -179,7 +177,7 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
     mizer.set_selected(0);
     drain();
     assert_eq!(
-        frame.model().active_power_mizer_mode(),
+        serialize(&frame).power_mizer_mode,
         Some(PowerMizerMode::PreferMaximumPerformance)
     );
     assert_order(&frame, &[PowerSetting::PowerCap, PowerSetting::PowerMizer]);
@@ -207,16 +205,17 @@ fn power_factory_preserves_modes_heuristics_and_pending_cap() {
         Some(PerformanceLevel::PerfDeterminism)
     );
     assert_eq!(
-        frame.model().active_power_mizer_mode(),
+        serialize(&frame).power_mizer_mode,
         Some(PowerMizerMode::Adaptive)
     );
-    assert!(
-        frame
-            .model()
-            .rows
-            .values()
-            .all(|row| row.get_changed_value().is_none())
+    assert_eq!(
+        serialize(&frame).performance_level,
+        Some(PerformanceLevel::PerfDeterminism)
     );
+}
+
+fn serialize(frame: &relm4::Controller<PowerFrame>) -> GpuConfig {
+    frame.model().serialize()
 }
 
 fn dropdown(frame: &relm4::Controller<PowerFrame>, setting: PowerSetting) -> gtk::DropDown {

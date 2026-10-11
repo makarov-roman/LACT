@@ -13,22 +13,18 @@ use crate::app::pages::oc_page::igpu_frame::{IGpuFrame, IGpuFrameMsg};
 use crate::app::utils::ext::RelmLaunchable as _;
 use crate::app::{msg::AppMsg, utils::ext::RelmDefaultLauchable};
 use adw::prelude::*;
-use amdgpu_sysfs::gpu_handle::{
-    PerformanceLevel, PowerLevelKind, power_profile_mode::PowerProfileModesTable,
-};
+use amdgpu_sysfs::gpu_handle::{PerformanceLevel, power_profile_mode::PowerProfileModesTable};
 use card_layout::{CardLayout, ColumnBias};
 use clocks_frame::{ClockDomain, ClocksFrame, ClocksFrameInit, ClocksFrameMsg};
 use indexmap::IndexMap;
 use lact_schema::config;
 use lact_schema::{ClocksTable, DeviceInfo, PowerStates};
-use nvml_wrapper::enums::device::PowerMizerMode;
 use power_frame::{PowerFrame, PowerFrameMsg};
 use power_states::power_states_dialog::{PowerStatesDialog, PowerStatesDialogMsg};
 use relm4::binding::BoolBinding;
 use relm4::{ComponentController, ComponentParts, ComponentSender, RelmWidgetExt};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tracing::debug;
 use vf_curve::{VfCurveEditor, VfCurveEditorInit, VfCurveEditorMsg};
 
 pub struct OcPage {
@@ -312,52 +308,45 @@ impl relm4::Component for OcPage {
 }
 
 impl OcPage {
+    pub fn serialize(&self) -> config::GpuConfig {
+        let gpu = self.gpu_clocks_frame.model().serialize();
+        let vram = self.vram_clocks_frame.model().serialize();
+        let power = self.power_frame.model().serialize();
+        config::GpuConfig {
+            power_cap: power.power_cap,
+            performance_level: power.performance_level,
+            power_mizer_mode: power.power_mizer_mode,
+            power_profile_mode_index: power.power_profile_mode_index,
+            custom_power_profile_mode_hueristics: power.custom_power_profile_mode_hueristics,
+            clocks_configuration: config::ClocksConfiguration {
+                min_core_clock: gpu.min_core_clock,
+                max_core_clock: gpu.max_core_clock,
+                min_memory_clock: vram.min_memory_clock,
+                max_memory_clock: vram.max_memory_clock,
+                min_voltage: gpu.min_voltage,
+                max_voltage: gpu.max_voltage,
+                voltage_offset: gpu.voltage_offset,
+                voltage_boost: gpu.voltage_boost,
+                gpu_clock_offsets: gpu.gpu_clock_offsets,
+                mem_clock_offsets: vram.mem_clock_offsets,
+                gpu_vf_curve: gpu.gpu_vf_curve,
+                mem_vf_curve: vram.mem_vf_curve,
+                nvidia_gpu_vf_curve: self.vf_curve_editor.model().serialize(),
+            },
+            power_states: if self.get_performance_level() == Some(PerformanceLevel::Manual) {
+                self.power_states_dialog.model().get_enabled_power_states()
+            } else {
+                IndexMap::new()
+            },
+            uma_carveout: self.igpu_frame.model().serialize(),
+            ..Default::default()
+        }
+    }
+
     pub fn get_performance_level(&self) -> Option<PerformanceLevel> {
         self.power_frame.model().performance_level()
     }
-
-    pub fn get_active_power_mizer_mode(&self) -> Option<PowerMizerMode> {
-        self.power_frame.model().active_power_mizer_mode()
-    }
-
-    pub fn get_power_profile_mode(&self) -> Option<u16> {
-        self.power_frame.model().power_profile_mode()
-    }
-
-    pub fn get_power_profile_mode_custom_heuristics(&self) -> Vec<Vec<Option<i32>>> {
-        self.power_frame
-            .model()
-            .power_profile_mode_custom_heuristics()
-    }
-
-    pub fn get_power_cap(&self) -> Option<f64> {
-        self.power_frame.model().get_user_cap()
-    }
-
-    pub fn apply_clocks_config(&self, config: &mut config::ClocksConfiguration) {
-        let mut commands = self.gpu_clocks_frame.model().get_commands();
-        commands.extend(self.vram_clocks_frame.model().get_commands());
-
-        debug!("applying clocks commands {commands:#?}");
-
-        for command in commands {
-            config.apply_clocks_command(&command);
-        }
-
-        if !self.vf_curve_editor.model().is_empty() {
-            config.nvidia_gpu_vf_curve = self.vf_curve_editor.model().get_configured_curve();
-        }
-    }
-
-    pub fn get_enabled_power_states(&self) -> IndexMap<PowerLevelKind, Vec<u8>> {
-        if self.get_performance_level() == Some(PerformanceLevel::Manual) {
-            self.power_states_dialog.model().get_enabled_power_states()
-        } else {
-            IndexMap::new()
-        }
-    }
-
-    pub fn get_uma_carveout(&self) -> Option<u32> {
-        self.igpu_frame.model().get_uma_carveout()
-    }
 }
+
+#[cfg(all(test, feature = "gtk-tests"))]
+mod tests;

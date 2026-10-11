@@ -19,6 +19,7 @@ use amdgpu_sysfs::gpu_handle::{PowerLevelId, overdrive::ClocksTableGen as AmdClo
 use i18n_embed_fl::fl;
 use lact_schema::{
     ClocksTable, DeviceStats, IntelClocksTable, NvidiaClockOffset, NvidiaClocksTable,
+    config::ClocksConfiguration,
     request::{ClockspeedType, SetClocksCommand},
 };
 use relm4::{
@@ -476,8 +477,14 @@ impl ClocksFrame {
                 control: AdjustmentInit {
                     unit: clock_unit(clock_type),
                     value: f64::from(data.current),
-                    default_value: matches!(clock_type, ClockspeedType::GpuClockOffset(_))
-                        .then_some(0.0),
+                    default_value: matches!(
+                        clock_type,
+                        ClockspeedType::GpuClockOffset(_)
+                            | ClockspeedType::MemClockOffset(_)
+                            | ClockspeedType::VoltageOffset
+                            | ClockspeedType::VoltageBoost
+                    )
+                    .then_some(0.0),
                     lower: f64::from(data.min),
                     upper: f64::from(data.max),
                     step_increment: get_row_step(clock_type),
@@ -779,42 +786,36 @@ impl ClocksFrame {
         }
     }
 
-    pub fn get_commands(&self) -> Vec<SetClocksCommand> {
-        self.adjustments
-            .iter()
-            .filter_map(|(clock_type, row)| {
-                if !self.secondary_p_states_enabled()
-                    && self.secondary_p_state_clocks.contains(clock_type)
-                {
-                    return None;
-                }
-                let current_value = row.get_value().as_numeric()?;
-                let configured_value = row
-                    .get_changed_value()
-                    .and_then(SettingRowValue::as_numeric)
-                    .map(|value| value as i32);
-                // If nvidia options are enabled, we always set locked clocks to None or Some
-                let value = if self.show_nvidia_options {
-                    match clock_type {
-                        ClockspeedType::MinCoreClock
-                        | ClockspeedType::MaxCoreClock
-                        | ClockspeedType::MinMemoryClock
-                        | ClockspeedType::MaxMemoryClock => self
-                            .enable_locked_clocks
-                            .value()
-                            .then_some(current_value as i32),
-                        _ => Some(configured_value?),
+    pub fn serialize(&self) -> ClocksConfiguration {
+        let mut config = ClocksConfiguration::default();
+        for (clock_type, row) in self.adjustments.iter() {
+            if !self.secondary_p_states_enabled()
+                && self.secondary_p_state_clocks.contains(clock_type)
+            {
+                continue;
+            }
+            if self.show_nvidia_options {
+                match clock_type {
+                    ClockspeedType::MinCoreClock
+                    | ClockspeedType::MaxCoreClock
+                    | ClockspeedType::MinMemoryClock
+                    | ClockspeedType::MaxMemoryClock
+                        if !self.enable_locked_clocks.value() =>
+                    {
+                        continue;
                     }
-                } else {
-                    Some(configured_value?)
-                };
-
-                Some(SetClocksCommand {
+                    ClockspeedType::GpuClockOffset(_) if self.vf_curve_editing.value() => continue,
+                    _ => {}
+                }
+            }
+            if let Some(value) = row.serialize().and_then(SettingRowValue::as_numeric) {
+                config.apply_clocks_command(&SetClocksCommand {
                     r#type: *clock_type,
-                    value,
-                })
-            })
-            .collect()
+                    value: Some(value as i32),
+                });
+            }
+        }
+        config
     }
 }
 

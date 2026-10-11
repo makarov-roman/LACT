@@ -16,6 +16,7 @@ fn setting_rows_share_state_and_factory_behavior() {
     preserves_numeric_edit_and_unit_change_behavior(&context);
     mixed_factory_updates_widgets_and_routes_resets(&context);
     row_forwards_edits_and_shuts_down_replaced_controls(&context);
+    row_reset_without_default_preserves_display_and_serialization(&context);
     select_rows_preserve_selection_and_edit_lifecycle(&context);
     gtk::glib::log_set_fatal_mask(Some("Gtk"), fatal_mask);
 }
@@ -46,7 +47,7 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
     );
     drain(context);
     assert_eq!(rows[&()].get_value(), SettingRowValue::Numeric(200.0));
-    assert_eq!(rows[&()].get_changed_value(), None);
+    assert_eq!(rows[&()].serialize(), Some(SettingRowValue::Numeric(200.0)));
     assert_silent(context, &receiver);
     let SettingControl::Adjustment(control) = &rows[&()].control else {
         panic!("expected a numeric row");
@@ -64,61 +65,55 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
     assert_silent(context, &receiver);
     assert_eq!(spin.value(), 400.0);
     assert_eq!(rows[&()].get_value(), SettingRowValue::Numeric(200.0));
-    assert_eq!(rows[&()].get_changed_value(), None);
+    assert_eq!(rows[&()].serialize(), Some(SettingRowValue::Numeric(200.0)));
+    assert!(!adjustment.is_changed().get());
 
     // Uncommitted text notifies Apply, but only committing it changes the raw value.
     spin.set_text("350");
     receive(context, &receiver);
-    assert_eq!(rows[&()].get_changed_value(), None);
+    assert!(!adjustment.is_changed().get());
     spin.update();
-    assert_eq!(
-        rows[&()].get_changed_value(),
-        Some(SettingRowValue::Numeric(175.0))
-    );
+    assert_eq!(rows[&()].serialize(), Some(SettingRowValue::Numeric(175.0)));
     assert!(notified.get());
     adjustment.set_value(200.0);
-    assert_eq!(
-        rows[&()].get_changed_value(),
-        Some(SettingRowValue::Numeric(200.0))
-    );
+    assert_eq!(rows[&()].serialize(), Some(SettingRowValue::Numeric(200.0)));
 
     rows.send(&(), SettingRowMsg::Reset);
     drain(context);
     let scale = find_widget::<gtk::Scale>(rows.widget().upcast_ref()).unwrap();
     assert_eq!(spin.value(), 50.0);
     assert_eq!(scale.value(), 50.0);
-    assert_eq!(
-        rows[&()].get_changed_value(),
-        Some(SettingRowValue::Numeric(25.0))
-    );
+    assert_eq!(rows[&()].serialize(), None);
+    assert!(adjustment.is_changed().get());
     assert!(adjustment.is_default().get());
 
     adjustment.set_value(50.0);
-    assert_eq!(
-        rows[&()].get_changed_value(),
-        Some(SettingRowValue::Numeric(50.0))
-    );
+    assert_eq!(rows[&()].serialize(), Some(SettingRowValue::Numeric(50.0)));
     assert!(!adjustment.is_default().get());
     adjustment.set_initial_value(25.0);
-    assert_eq!(rows[&()].get_changed_value(), None);
+    assert_eq!(rows[&()].serialize(), None);
     assert!(adjustment.is_default().get());
     assert_eq!(spin.value(), 50.0);
     assert!(!notified.get());
 
     spin.set_value(1000.0);
     assert_eq!(adjustment.get_value(), 200.0);
-    assert_eq!(adjustment.get_changed_value(), Some(200.0));
+    assert_eq!(adjustment.serialize(), Some(200.0));
     assert!(!adjustment.is_default().get());
 
     let zero_default = AdjustmentValue::new(50.0, Some(0.0), 0.0, 200.0, 1.0, 10.0);
     zero_default.reset();
-    assert_eq!(zero_default.get_changed_value(), Some(0.0));
+    assert_eq!(zero_default.serialize(), None);
     assert!(zero_default.is_default().get());
     let unknown_default = AdjustmentValue::new(50.0, None, 0.0, 200.0, 1.0, 10.0);
     unknown_default.reset();
     assert_eq!(unknown_default.get_value(), 50.0);
-    assert_eq!(unknown_default.get_changed_value(), None);
+    assert_eq!(unknown_default.serialize(), Some(50.0));
     assert!(!unknown_default.is_default().get());
+    assert!(!unknown_default.is_changed().get());
+    unknown_default.set_value_ratio(2.0);
+    assert_eq!(unknown_default.serialize(), Some(50.0));
+    assert!(!unknown_default.is_changed().get());
 }
 
 fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainContext) {
@@ -178,11 +173,8 @@ fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainCont
     rows.send(&0, SettingRowMsg::Reset);
     receive(context, &receiver);
     assert!(!switch.is_active());
-    assert_eq!(
-        rows[&0].get_changed_value(),
-        Some(SettingRowValue::Boolean(false))
-    );
-    assert_eq!(rows[&1].get_changed_value(), None);
+    assert_eq!(rows[&0].serialize(), None);
+    assert_eq!(rows[&1].serialize(), Some(SettingRowValue::Numeric(50.0)));
     rows.send(&0, SettingRowMsg::Reset);
     assert_silent(context, &receiver);
     rows.send(&0, SettingRowMsg::SetValue(SettingRowValue::Boolean(true)));
@@ -193,7 +185,7 @@ fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainCont
     };
     control.model().value.set_initial_value(false);
     assert!(!switch.is_active());
-    assert_eq!(rows[&0].get_changed_value(), None);
+    assert_eq!(rows[&0].serialize(), None);
 
     for key in [0, 1] {
         rows.send(&key, SettingRowMsg::SetSensitive(false));
@@ -266,6 +258,32 @@ fn row_forwards_edits_and_shuts_down_replaced_controls(context: &gtk::glib::Main
     receive(context, &receiver);
 }
 
+fn row_reset_without_default_preserves_display_and_serialization(context: &gtk::glib::MainContext) {
+    let (output, receiver) = relm4::channel();
+    let mut rows = FactoryHashMap::<(), SettingRow<()>>::builder()
+        .launch_default()
+        .forward(&output, |()| ());
+    rows.insert(
+        (),
+        SettingRowInit {
+            control: AdjustmentInit {
+                value: 50.0,
+                upper: 100.0,
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        },
+    );
+    assert_silent(context, &receiver);
+    rows.send(&(), SettingRowMsg::Reset);
+    assert_silent(context, &receiver);
+    assert_eq!(rows[&()].serialize(), Some(SettingRowValue::Numeric(50.0)));
+    rows.send(&(), SettingRowMsg::SetValue(SettingRowValue::Numeric(50.0)));
+    assert_silent(context, &receiver);
+    assert_eq!(rows[&()].serialize(), Some(SettingRowValue::Numeric(50.0)));
+}
+
 fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainContext) {
     let groups: [gtk::SizeGroup; 2] =
         std::array::from_fn(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal));
@@ -304,7 +322,10 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
     let dropdown = find_widget::<gtk::DropDown>(root.upcast_ref()).unwrap();
     assert_eq!(dropdown.selected(), 1);
     assert_eq!(rows[&()].get_value().as_selected(), Some(1));
-    assert_eq!(rows[&()].get_changed_value(), None);
+    assert_eq!(
+        rows[&()].serialize(),
+        Some(SettingRowValue::Selected(Some(1)))
+    );
     assert_silent(context, &receiver);
     let SettingControl::Select(control) = &rows[&()].control else {
         unreachable!()
@@ -327,10 +348,7 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
     assert!(groups.iter().all(|group| group.widgets().len() == 1));
     assert_eq!(dropdown.selected(), 0);
     assert_eq!(description.text(), "Automatic clocks");
-    assert_eq!(
-        rows[&()].get_changed_value(),
-        Some(SettingRowValue::Selected(Some(0)))
-    );
+    assert_eq!(rows[&()].serialize(), None);
     dropdown.set_selected(1);
     receive(context, &receiver);
     assert_eq!(rows[&()].get_value().as_selected(), Some(1));
@@ -351,7 +369,7 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
     let empty = find_widget::<gtk::DropDown>(rows.widget().upcast_ref()).unwrap();
     assert_eq!(empty.selected(), gtk::INVALID_LIST_POSITION);
     assert_eq!(rows[&()].get_value().as_selected(), None);
-    assert_eq!(rows[&()].get_changed_value(), None);
+    assert_eq!(rows[&()].serialize(), None);
     rows.send(&(), SettingRowMsg::Reset);
     dropdown.set_selected(0);
     assert_silent(context, &receiver);
@@ -376,6 +394,8 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
     assert_eq!(dropdown.selected(), 0);
     assert_eq!(rows[&()].get_value().as_selected(), Some(0));
     rows.send(&(), SettingRowMsg::Reset);
+    receive(context, &receiver);
+    assert_eq!(rows[&()].serialize(), None);
+    rows.send(&(), SettingRowMsg::Reset);
     assert_silent(context, &receiver);
-    assert_eq!(rows[&()].get_changed_value(), None);
 }

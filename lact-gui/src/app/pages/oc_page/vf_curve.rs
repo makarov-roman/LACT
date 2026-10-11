@@ -888,11 +888,7 @@ impl VfCurveEditor {
         Some((y_start, y_end))
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.points.borrow().is_empty()
-    }
-
-    pub fn get_configured_curve(&self) -> IndexMap<u8, config::NvidiaCurvePoint> {
+    pub fn serialize(&self) -> IndexMap<u8, config::NvidiaCurvePoint> {
         let points = self.points.borrow();
 
         if !self.allow_editing.value() {

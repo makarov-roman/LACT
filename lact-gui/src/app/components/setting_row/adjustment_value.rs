@@ -3,10 +3,10 @@ use gtk::prelude::*;
 use relm4::binding::{Binding, BoolBinding};
 use std::{cell::Cell, ops::Deref, rc::Rc};
 
-/// A numeric setting whose value is stored in GTK's shared adjustment.
+/// A numeric setting stored in a shared GTK adjustment, with raw/display unit conversion.
 #[derive(Clone, Debug)]
 pub struct AdjustmentValue {
-    adjustment: gtk::Adjustment,
+    value: gtk::Adjustment,
     default_value: Option<f64>,
     value_ratio: Rc<Cell<f64>>,
     is_changed: BoolBinding,
@@ -17,7 +17,7 @@ impl Deref for AdjustmentValue {
     type Target = gtk::Adjustment;
 
     fn deref(&self) -> &Self::Target {
-        &self.adjustment
+        &self.value
     }
 }
 
@@ -35,11 +35,11 @@ impl AdjustmentValue {
         let model = Self {
             is_default: BoolBinding::new(default_value == Some(adjustment.value())),
             is_changed: BoolBinding::new(false),
-            adjustment,
             default_value,
+            value: adjustment,
             value_ratio: Rc::new(Cell::new(1.0)),
         };
-        model.adjustment.connect_value_changed({
+        model.value.connect_value_changed({
             let is_changed = model.is_changed().clone();
             let is_default = model.is_default().clone();
             let value_ratio = model.value_ratio.clone();
@@ -52,15 +52,17 @@ impl AdjustmentValue {
         model
     }
 
-    /// Changes display units and clears the edit state, retaining raw values.
+    /// Changes display units, retaining the raw value and edit state.
     pub fn set_value_ratio(&self, ratio: f64) {
         let value = self.get_value();
-        let lower = self.adjustment.lower() / self.value_ratio.get();
-        let upper = self.adjustment.upper() / self.value_ratio.get();
+        let changed = self.is_changed.get();
+        let lower = self.value.lower() / self.value_ratio.get();
+        let upper = self.value.upper() / self.value_ratio.get();
         self.value_ratio.set(ratio);
-        self.adjustment.set_lower(lower * ratio);
-        self.adjustment.set_upper(upper * ratio);
+        self.value.set_lower(lower * ratio);
+        self.value.set_upper(upper * ratio);
         self.set_initial_value(value);
+        self.is_changed.set(changed);
     }
 }
 
@@ -68,17 +70,17 @@ impl SettingValue for AdjustmentValue {
     type Value = f64;
 
     fn get_value(&self) -> f64 {
-        self.adjustment.value() / self.value_ratio.get()
+        self.value.value() / self.value_ratio.get()
     }
 
     fn set_value(&self, value: f64) {
-        self.adjustment.set_value(value * self.value_ratio.get());
+        self.value.set_value(value * self.value_ratio.get());
     }
 
     fn set_initial_value(&self, value: f64) {
         self.set_value(value);
         // Keep the refresh notification even when the numeric value is unchanged.
-        self.adjustment.emit_by_name::<()>("value_changed", &[]);
+        self.value.emit_by_name::<()>("value_changed", &[]);
         self.is_changed.set(false);
     }
 
@@ -88,8 +90,9 @@ impl SettingValue for AdjustmentValue {
         }
     }
 
-    fn has_default(&self) -> bool {
-        self.default_value.is_some()
+    fn serialize(&self) -> Option<f64> {
+        let value = self.get_value();
+        (Some(value) != self.default_value).then_some(value)
     }
 
     fn is_changed(&self) -> &BoolBinding {

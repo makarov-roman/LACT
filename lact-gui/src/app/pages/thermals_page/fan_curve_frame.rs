@@ -16,7 +16,11 @@ use adw::prelude::*;
 use gtk::{gdk, glib};
 use i18n_embed_fl::fl;
 use indexmap::IndexMap;
-use lact_schema::{FanCurveMap, TemperatureEntry, default_fan_curve};
+use lact_schema::{
+    FanControlMode, FanCurveMap, TemperatureEntry,
+    config::{FanControlSettings, FanCurve},
+    default_fan_curve,
+};
 use plotters::{
     chart::ChartBuilder,
     prelude::{Circle, EmptyElement, IntoDrawingArea, Text},
@@ -39,14 +43,15 @@ use std::{
 
 pub const DEFAULT_TEMP_RANGE: RangeInclusive<f32> = 20.0..=115.0;
 pub const DEFAULT_SPEED_RANGE: RangeInclusive<f32> = 0.0..=1.0;
-const DEFAULT_CHANGE_THRESHOLD: u64 = 2;
+const DEFAULT_CHANGE_THRESHOLD: u64 = 0;
 const DEFAULT_AUTO_THRESHOLD: u64 = 0;
-const DEFAULT_SPINDOWN_DELAY_MS: u64 = 5000;
+const DEFAULT_SPINDOWN_DELAY_MS: u64 = 0;
 
 const TEMPERATURE_DRAG_MARGIN: f32 = 4.0;
 const PERCENTAGE_DRAG_MARGIN: f32 = 0.04;
 
 pub(super) struct FanCurveFrame {
+    interval_ms: u64,
     adjustments: FactoryHashMap<CurveSetting, SettingRow<CurveSetting>>,
     label_size_group: gtk::SizeGroup,
     input_size_group: gtk::SizeGroup,
@@ -83,6 +88,7 @@ pub(super) enum CurveSetting {
 
 #[derive(Debug)]
 pub(super) enum FanCurveFrameMsg {
+    Interval(u64),
     Curve(CurveSetupMsg),
     DragStart,
     DragUpdate(f64, f64),
@@ -197,6 +203,7 @@ impl relm4::Component for FanCurveFrame {
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         let model = Self {
+            interval_ms: FanControlSettings::default().interval_ms,
             adjustments: FactoryHashMap::builder()
                 .launch(AdjustmentCard::init(()).content.clone())
                 .forward(APP_BROKER.sender(), |()| AppMsg::SettingsChanged),
@@ -229,6 +236,7 @@ impl relm4::Component for FanCurveFrame {
         _root: &Self::Root,
     ) {
         match msg {
+            FanCurveFrameMsg::Interval(interval) => self.interval_ms = interval,
             FanCurveFrameMsg::Curve(msg) => {
                 *self.chart.data.borrow_mut() =
                     normalize_fan_curve(msg.curve, &msg.temperature_range, &msg.speed_range)
@@ -257,7 +265,7 @@ impl relm4::Component for FanCurveFrame {
                 let upper_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
                 let auto_threshold_available =
                     msg.auto_threshold_supported && *msg.temperature_range.end() != 0.0;
-                if !msg.hw_based && self.temp_keys.len() > 1 && !auto_threshold_available {
+                if !msg.hw_based && !self.temp_keys.is_empty() && !auto_threshold_available {
                     self.adjustments.insert(
                         CurveSetting::TemperatureSensor,
                         SettingRowInit {
@@ -272,6 +280,10 @@ impl relm4::Component for FanCurveFrame {
                             .into(),
                             ..Default::default()
                         },
+                    );
+                    self.adjustments.send(
+                        &CurveSetting::TemperatureSensor,
+                        SettingRowMsg::SetVisible(self.temp_keys.len() > 1),
                     );
                 }
                 if !msg.hw_based {
@@ -330,6 +342,7 @@ impl relm4::Component for FanCurveFrame {
                                 .into(),
                             control: AdjustmentInit {
                                 value: msg.auto_threshold.unwrap_or(DEFAULT_AUTO_THRESHOLD) as f64,
+                                default_value: Some(DEFAULT_AUTO_THRESHOLD as f64),
                                 upper: *msg.temperature_range.end() as f64,
                                 page_increment: 5.0,
                                 lower_label_group: Some(lower_label_group.clone()),
@@ -404,41 +417,31 @@ impl relm4::Component for FanCurveFrame {
 }
 
 impl FanCurveFrame {
-    pub fn get_curve(&self) -> FanCurveMap {
-        self.chart.data.borrow().iter().copied().collect()
-    }
-
-    pub fn spindown_delay(&self) -> u64 {
-        self.adjustments
-            .get(&CurveSetting::SpindownDelay)
-            .and_then(|row| row.get_value().as_numeric())
-            .map(|value| value as u64)
-            .unwrap_or(DEFAULT_SPINDOWN_DELAY_MS)
-    }
-
-    pub fn change_threshold(&self) -> u64 {
-        self.adjustments
-            .get(&CurveSetting::ChangeThreshold)
-            .and_then(|row| row.get_value().as_numeric())
-            .map(|value| value as u64)
-            .unwrap_or(DEFAULT_CHANGE_THRESHOLD)
-    }
-
-    pub fn temperature_key(&self) -> Option<String> {
-        let index = self
-            .adjustments
-            .get(&CurveSetting::TemperatureSensor)?
-            .get_value()
-            .as_selected()?;
-        self.temp_keys.get(index as usize).cloned()
-    }
-
-    pub fn auto_threshold(&self) -> Option<u64> {
-        self.adjustments
-            .get(&CurveSetting::AutoThreshold)
-            .and_then(|row| row.get_changed_value())
-            .and_then(SettingRowValue::as_numeric)
-            .map(|value| value as u64)
+    pub fn serialize(&self) -> FanControlSettings {
+        let value = |setting| {
+            self.adjustments
+                .get(&setting)
+                .and_then(SettingRow::serialize)
+        };
+        let numeric = |setting| {
+            value(setting)
+                .and_then(SettingRowValue::as_numeric)
+                .map(|value| value as u64)
+        };
+        FanControlSettings {
+            mode: FanControlMode::Curve,
+            interval_ms: self.interval_ms,
+            curve: FanCurve(self.chart.data.borrow().iter().copied().collect()),
+            spindown_delay_ms: numeric(CurveSetting::SpindownDelay),
+            change_threshold: numeric(CurveSetting::ChangeThreshold),
+            auto_threshold: numeric(CurveSetting::AutoThreshold),
+            temperature_key: value(CurveSetting::TemperatureSensor)
+                .and_then(SettingRowValue::as_selected)
+                .and_then(|index| self.temp_keys.get(index as usize))
+                .cloned()
+                .unwrap_or_else(|| FanControlSettings::default().temperature_key),
+            ..Default::default()
+        }
     }
 
     fn edit_curve(&self, f: impl FnOnce(&mut Vec<(i32, f32)>), widgets: &FanCurveFrameWidgets) {
@@ -668,13 +671,19 @@ mod tests {
             auto_threshold_supported,
             auto_threshold: None,
         };
-        frame.emit(FanCurveFrameMsg::Curve(setup(false, false, "junction")));
+        let mut initial = setup(false, false, "junction");
+        initial.spindown_delay = Some(5000);
+        initial.change_threshold = Some(2);
+        frame.emit(FanCurveFrameMsg::Interval(750));
+        frame.emit(FanCurveFrameMsg::Curve(initial));
         drain();
-        assert_eq!(frame.model().temperature_key().as_deref(), Some("junction"));
+        assert_eq!(frame.model().serialize().temperature_key, "junction");
+        assert_eq!(frame.model().serialize().interval_ms, 750);
+        assert_eq!(frame.model().serialize().spindown_delay_ms, Some(5000));
+        assert_eq!(frame.model().serialize().change_threshold, Some(2));
         let dropdown = {
             let rows = &frame.model().adjustments;
             assert_eq!(rows.len(), 3);
-            assert!(rows.values().all(|row| row.get_changed_value().is_none()));
             find_widget::<gtk::DropDown>(
                 rows[&CurveSetting::TemperatureSensor].widget().upcast_ref(),
             )
@@ -683,10 +692,13 @@ mod tests {
         assert_eq!(dropdown.model().unwrap().n_items(), 2);
         dropdown.set_selected(0);
         drain();
-        assert_eq!(frame.model().temperature_key().as_deref(), Some("edge"));
+        assert_eq!(frame.model().serialize().temperature_key, "edge");
         frame.emit(FanCurveFrameMsg::DefaultCurve);
         drain();
-        assert_eq!(frame.model().temperature_key().as_deref(), Some("edge"));
+        assert_eq!(frame.model().serialize().temperature_key, "edge");
+        assert_eq!(frame.model().serialize().spindown_delay_ms, None);
+        assert_eq!(frame.model().serialize().change_threshold, None);
+        assert_eq!(frame.model().serialize().interval_ms, 750);
 
         for (hw_based, auto_threshold_supported) in [(true, false), (false, true)] {
             frame.emit(FanCurveFrameMsg::Curve(setup(
@@ -695,7 +707,7 @@ mod tests {
                 "edge",
             )));
             drain();
-            assert_eq!(frame.model().temperature_key(), None);
+            assert_eq!(frame.model().serialize().temperature_key, "edge");
             assert!(
                 frame
                     .model()
@@ -706,13 +718,14 @@ mod tests {
         }
         frame.emit(FanCurveFrameMsg::Curve(setup(false, false, "missing")));
         drain();
-        assert_eq!(frame.model().temperature_key().as_deref(), Some("edge"));
-        assert!(
-            frame
-                .model()
-                .adjustments
-                .values()
-                .all(|row| row.get_changed_value().is_none())
-        );
+        assert_eq!(frame.model().serialize().temperature_key, "edge");
+
+        let mut single_sensor = setup(false, false, "junction");
+        single_sensor
+            .current_temperatures
+            .retain(|key, _| key == "junction");
+        frame.emit(FanCurveFrameMsg::Curve(single_sensor));
+        drain();
+        assert_eq!(frame.model().serialize().temperature_key, "junction");
     }
 }

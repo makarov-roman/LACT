@@ -99,11 +99,24 @@ impl<Key> SettingRow<Key> {
         self.control.widget()
     }
 
-    pub fn has_default(&self) -> bool {
+    /// Serialize the current value, omitting unset values and defaults.
+    pub fn serialize(&self) -> Option<SettingRowValue> {
         match &self.control {
-            SettingControl::Adjustment(control) => control.model().value.has_default(),
-            SettingControl::Boolean(control) => control.model().value.has_default(),
-            SettingControl::Select(control) => control.model().value.has_default(),
+            SettingControl::Adjustment(control) => control
+                .model()
+                .value
+                .serialize()
+                .map(SettingRowValue::Numeric),
+            SettingControl::Boolean(control) => control
+                .model()
+                .value
+                .serialize()
+                .map(SettingRowValue::Boolean),
+            SettingControl::Select(control) => control
+                .model()
+                .value
+                .serialize()
+                .map(SettingRowValue::Selected),
         }
     }
 
@@ -133,26 +146,6 @@ impl<Key> SettingRow<Key> {
             SettingControl::Select(control) => {
                 SettingRowValue::Selected(control.model().value.get_value())
             }
-        }
-    }
-
-    pub fn get_changed_value(&self) -> Option<SettingRowValue> {
-        match &self.control {
-            SettingControl::Adjustment(control) => control
-                .model()
-                .value
-                .get_changed_value()
-                .map(SettingRowValue::Numeric),
-            SettingControl::Boolean(control) => control
-                .model()
-                .value
-                .get_changed_value()
-                .map(SettingRowValue::Boolean),
-            SettingControl::Select(control) => control
-                .model()
-                .value
-                .get_changed_value()
-                .map(SettingRowValue::Selected),
         }
     }
 }

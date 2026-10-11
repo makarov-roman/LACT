@@ -5,7 +5,7 @@ use crate::{
         components::{
             adjustment_card::AdjustmentCard,
             page_section::PageSection,
-            setting_row::{SelectInit, SelectOption, SettingRow, SettingRowInit},
+            setting_row::{SelectInit, SelectOption, SettingRow, SettingRowInit, SettingRowValue},
         },
         msg::AppMsg,
         utils::formatting,
@@ -96,7 +96,11 @@ impl relm4::Component for IGpuFrame {
 }
 
 impl IGpuFrame {
-    pub fn get_uma_carveout(&self) -> Option<u32> {
-        self.rows.get(&())?.get_changed_value()?.as_selected()
+    pub fn serialize(&self) -> Option<usize> {
+        self.rows
+            .get(&())
+            .and_then(SettingRow::serialize)
+            .and_then(SettingRowValue::as_selected)
+            .map(|value| value as usize)
     }
 }

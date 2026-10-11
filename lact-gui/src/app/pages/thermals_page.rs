@@ -21,15 +21,13 @@ use crate::{
 };
 use adw::prelude::*;
 use amdgpu_sysfs::gpu_handle::fan_control::FanInfo;
-use anyhow::anyhow;
 use fan_curve_frame::{
     CurveSetupMsg, DEFAULT_SPEED_RANGE, DEFAULT_TEMP_RANGE, FanCurveFrame, FanCurveFrameMsg,
 };
 use gtk::glib;
 use i18n_embed_fl::fl;
 use lact_schema::{
-    DeviceFlag, FanControlMode,
-    config::{FanControlSettings, FanCurve, GpuConfig},
+    DeviceFlag, FanControlMode, NvidiaThermalOptions, PmfwOptions, config::FanControlSettings,
     default_fan_curve,
 };
 use relm4::{
@@ -37,7 +35,6 @@ use relm4::{
     factory::FactoryHashMap,
 };
 use std::collections::HashSet;
-use std::sync::Arc;
 
 pub struct ThermalsPage {
     stats_section: relm4::Controller<GpuStatsSection>,
@@ -76,6 +73,7 @@ impl ThermalSetting {
 
 #[derive(Debug)]
 pub enum ThermalsPageMsg {
+    FanControlInterval(u64),
     Update { update: PageUpdate, initial: bool },
     FanModeSelected(Option<FanControlMode>),
     RestNvidiaOptions,
@@ -254,6 +252,10 @@ impl relm4::Component for ThermalsPage {
         _root: &Self::Root,
     ) {
         match msg {
+            ThermalsPageMsg::FanControlInterval(interval) => {
+                self.fan_curve_frame
+                    .emit(FanCurveFrameMsg::Interval(interval));
+            }
             ThermalsPageMsg::Update { update, initial } => match update {
                 PageUpdate::Info(info) => {
                     self.stats_section
@@ -435,15 +437,9 @@ impl relm4::Component for ThermalsPage {
                 APP_BROKER.send(AppMsg::SettingsChanged);
             }
             ThermalsPageMsg::RestNvidiaOptions => {
-                if let Some(row) = self.nvidia_target_temperature.get(&()) {
-                    if row.has_default() {
-                        self.nvidia_target_temperature
-                            .send(&(), SettingRowMsg::Reset);
-                    } else {
-                        APP_BROKER.send(AppMsg::Error(Arc::new(anyhow!(
-                            "No default target temperature present"
-                        ))));
-                    }
+                if self.nvidia_target_temperature.get(&()).is_some() {
+                    self.nvidia_target_temperature
+                        .send(&(), SettingRowMsg::Reset);
                 }
             }
         }
@@ -466,92 +462,54 @@ impl ThermalsPage {
         self.has_fan_speed && (self.selected_mode.is_some() || self.has_pmfw_options())
     }
 
-    pub fn apply_config(&self, config: &mut GpuConfig) {
-        if let Some(mode) = self.selected_mode {
-            config.fan_control_enabled = true;
-            let fan_settings = config
-                .fan_control_settings
-                .get_or_insert_with(FanControlSettings::default);
-
-            match mode {
-                FanControlMode::Curve => {
-                    fan_settings.mode = FanControlMode::Curve;
-
-                    let fan_curve_model = self.fan_curve_frame.model();
-                    fan_settings.curve = FanCurve(fan_curve_model.get_curve());
-                    fan_settings.change_threshold = Some(fan_curve_model.change_threshold());
-                    fan_settings.spindown_delay_ms = Some(fan_curve_model.spindown_delay());
-
-                    if let Some(threshold) = fan_curve_model.auto_threshold() {
-                        fan_settings.auto_threshold = Some(threshold);
-                    }
-
-                    if let Some(temp_key) = fan_curve_model.temperature_key() {
-                        fan_settings.temperature_key = temp_key;
-                    }
-                }
-                FanControlMode::Static => {
-                    fan_settings.mode = FanControlMode::Static;
-                    fan_settings.static_speed = self
-                        .static_speed
-                        .get(&())
-                        .and_then(|row| row.get_value().as_numeric())
-                        .map(|value| value as f32 / 100.0)
-                        .unwrap_or(0.5);
-                }
-            }
-        } else {
-            config.fan_control_enabled = false;
-        }
-
-        let pmfw_config = &mut config.pmfw_options;
-        for (setting, config_value) in [
-            (
-                ThermalSetting::AcousticLimit,
-                &mut pmfw_config.acoustic_limit,
-            ),
-            (
-                ThermalSetting::AcousticTarget,
-                &mut pmfw_config.acoustic_target,
-            ),
-            (
-                ThermalSetting::TargetTemperature,
-                &mut pmfw_config.target_temperature,
-            ),
-            (ThermalSetting::MinimumPwm, &mut pmfw_config.minimum_pwm),
-        ] {
-            if let Some(value) = self
-                .pmfw_rows
-                .get(&setting)
-                .and_then(|row| row.get_changed_value())
+    pub fn serialize(
+        &self,
+    ) -> (
+        Option<FanControlSettings>,
+        PmfwOptions,
+        NvidiaThermalOptions,
+    ) {
+        let fan_settings = self.selected_mode.map(|mode| FanControlSettings {
+            mode,
+            static_speed: self
+                .static_speed
+                .get(&())
+                .and_then(SettingRow::serialize)
                 .and_then(SettingRowValue::as_numeric)
-            {
-                *config_value = Some(value as u32);
-            }
-        }
-        if let Some(value) = self
-            .pmfw_rows
-            .get(&ThermalSetting::ZeroRpmTemperature)
-            .and_then(|row| row.get_changed_value())
-            .and_then(SettingRowValue::as_numeric)
-        {
-            pmfw_config.zero_rpm_threshold = Some(value as u32);
-        }
-        if let Some(value) = self
-            .nvidia_target_temperature
-            .get(&())
-            .and_then(|row| row.get_changed_value())
-            .and_then(SettingRowValue::as_numeric)
-        {
-            config.nvidia_thermal_options.target_temperature = Some(value as u32);
-        }
-        if let Some(value) = self
-            .pmfw_rows
-            .get(&ThermalSetting::ZeroRpmEnabled)
-            .and_then(|row| row.get_value().as_boolean())
-        {
-            pmfw_config.zero_rpm = Some(value);
-        }
+                .map(|value| value as f32 / 100.0)
+                .unwrap_or(0.5),
+            ..self.fan_curve_frame.model().serialize()
+        });
+        let numeric = |setting| {
+            self.pmfw_rows
+                .get(&setting)
+                .and_then(SettingRow::serialize)
+                .and_then(SettingRowValue::as_numeric)
+                .map(|value| value as u32)
+        };
+        (
+            fan_settings,
+            PmfwOptions {
+                acoustic_limit: numeric(ThermalSetting::AcousticLimit),
+                acoustic_target: numeric(ThermalSetting::AcousticTarget),
+                minimum_pwm: numeric(ThermalSetting::MinimumPwm),
+                target_temperature: numeric(ThermalSetting::TargetTemperature),
+                zero_rpm_threshold: numeric(ThermalSetting::ZeroRpmTemperature),
+                zero_rpm: self
+                    .pmfw_rows
+                    .get(&ThermalSetting::ZeroRpmEnabled)
+                    .and_then(SettingRow::serialize)
+                    .and_then(SettingRowValue::as_boolean),
+            },
+            NvidiaThermalOptions {
+                target_temperature: self
+                    .nvidia_target_temperature
+                    .get(&())
+                    .and_then(SettingRow::serialize)
+                    .and_then(SettingRowValue::as_numeric)
+                    .map(|value| value as u32),
+            },
+        )
     }
 
     fn has_pmfw_options(&self) -> bool {
@@ -576,6 +534,7 @@ mod tests {
     use super::*;
     use crate::app::test_utils::find_widget;
     use lact_schema::{DeviceStats, FanStats, NvidiaThermalInfo, PmfwInfo};
+    use std::sync::Arc;
 
     #[test]
     #[ignore = "requires a GTK display; run explicitly with --ignored"]
@@ -628,12 +587,10 @@ mod tests {
         assert!(!target_row.get_visible());
         assert!(enabled_row.get_visible());
         assert!(threshold_row.get_visible());
-        assert!(
-            page.model()
-                .pmfw_rows
-                .values()
-                .all(|row| row.get_changed_value().is_none())
-        );
+        let (_, pmfw, _) = page.model().serialize();
+        assert_eq!(pmfw.target_temperature, Some(75));
+        assert_eq!(pmfw.zero_rpm, Some(true));
+        assert_eq!(pmfw.zero_rpm_threshold, Some(45));
 
         let switch = find_widget::<gtk::Switch>(enabled_row.upcast_ref()).unwrap();
         let spin = find_widget::<gtk::SpinButton>(threshold_row.upcast_ref()).unwrap();
@@ -666,11 +623,11 @@ mod tests {
                 page.model().label_size_group.widgets().contains(&title_box),
                 zero_rpm_visible
             );
-            let mut config = GpuConfig::default();
-            page.model().apply_config(&mut config);
-            assert_eq!(config.pmfw_options.zero_rpm, Some(false));
-            assert_eq!(config.pmfw_options.zero_rpm_threshold, Some(55));
-            assert_eq!(config.pmfw_options.target_temperature, None);
+            let (fan, pmfw, _) = page.model().serialize();
+            assert_eq!(fan.as_ref().map(|settings| settings.mode), mode);
+            assert_eq!(pmfw.zero_rpm, Some(false));
+            assert_eq!(pmfw.zero_rpm_threshold, Some(55));
+            assert_eq!(pmfw.target_temperature, Some(75));
         }
 
         // Reloading a device without zero-RPM support must leave no empty curve-mode card.
@@ -692,13 +649,12 @@ mod tests {
         assert_eq!(page.model().pmfw_rows.len(), 1);
         assert!(!list.get_visible());
         assert!(page.model().label_size_group.widgets().is_empty());
-        let mut config = GpuConfig::default();
-        page.model().apply_config(&mut config);
-        assert_eq!(config.pmfw_options.zero_rpm, None);
-        assert_eq!(config.pmfw_options.zero_rpm_threshold, None);
+        let (_, pmfw, _) = page.model().serialize();
+        assert_eq!(pmfw.zero_rpm, None);
+        assert_eq!(pmfw.zero_rpm_threshold, None);
 
         // The reset action uses the current row's default, including after a reload loses it.
-        for default in [Some(80), None] {
+        for (default, expected) in [(Some(80), None), (None, Some(85))] {
             page.emit(ThermalsPageMsg::Update {
                 update: PageUpdate::Stats(Arc::new(DeviceStats {
                     nvidia_thermal_info: NvidiaThermalInfo {
@@ -714,9 +670,8 @@ mod tests {
             });
             page.emit(ThermalsPageMsg::RestNvidiaOptions);
             drain();
-            let mut config = GpuConfig::default();
-            page.model().apply_config(&mut config);
-            assert_eq!(config.nvidia_thermal_options.target_temperature, default);
+            let (_, _, nvidia) = page.model().serialize();
+            assert_eq!(nvidia.target_temperature, expected);
         }
     }
 }

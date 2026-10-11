@@ -3,7 +3,7 @@ use relm4::binding::{Binding, BoolBinding};
 
 #[derive(Clone, Debug)]
 pub struct BooleanValue {
-    binding: BoolBinding,
+    value: BoolBinding,
     default_value: Option<bool>,
     is_changed: BoolBinding,
     is_default: BoolBinding,
@@ -12,12 +12,12 @@ pub struct BooleanValue {
 impl BooleanValue {
     pub fn new(value: bool, default_value: Option<bool>) -> Self {
         let model = Self {
-            binding: BoolBinding::new(value),
+            value: BoolBinding::new(value),
             default_value,
             is_changed: BoolBinding::new(false),
             is_default: BoolBinding::new(default_value == Some(value)),
         };
-        model.binding.connect_value_notify({
+        model.value.connect_value_notify({
             let is_changed = model.is_changed.clone();
             let is_default = model.is_default.clone();
             move |binding| {
@@ -29,7 +29,7 @@ impl BooleanValue {
     }
 
     pub fn binding(&self) -> &BoolBinding {
-        &self.binding
+        &self.value
     }
 }
 
@@ -37,12 +37,12 @@ impl SettingValue for BooleanValue {
     type Value = bool;
 
     fn get_value(&self) -> bool {
-        self.binding.get()
+        self.value.get()
     }
 
     fn set_value(&self, value: bool) {
         if self.get_value() != value {
-            self.binding.set(value);
+            self.value.set(value);
         }
     }
 
@@ -57,8 +57,9 @@ impl SettingValue for BooleanValue {
         }
     }
 
-    fn has_default(&self) -> bool {
-        self.default_value.is_some()
+    fn serialize(&self) -> Option<bool> {
+        let value = self.get_value();
+        (Some(value) != self.default_value).then_some(value)
     }
 
     fn is_changed(&self) -> &BoolBinding {
@@ -78,27 +79,31 @@ mod tests {
     fn edits_resets_and_loads_share_state_across_clones() {
         let value = BooleanValue::new(true, Some(false));
         let shared = value.clone();
+        assert_eq!(value.serialize(), Some(true));
         value.set_value(true);
-        assert_eq!(value.get_changed_value(), None);
+        assert!(!value.is_changed().get());
         shared.set_value(false);
         assert!(value.is_default().get());
         shared.set_value(true);
-        assert_eq!(value.get_changed_value(), Some(true));
+        assert_eq!(value.serialize(), Some(true));
+        assert!(value.is_changed().get());
         value.reset();
         assert!(!shared.get_value());
-        assert_eq!(shared.get_changed_value(), Some(false));
+        assert_eq!(shared.serialize(), None);
         value.set_initial_value(false);
         value.reset();
         assert!(value.is_default().get());
-        assert_eq!(shared.get_changed_value(), None);
+        assert!(!shared.is_changed().get());
     }
 
     #[test]
-    fn unknown_default_does_not_reset_the_value() {
+    fn unknown_default_preserves_binding_value() {
         let value = BooleanValue::new(true, None);
+        assert_eq!(value.serialize(), Some(true));
         value.reset();
         assert!(value.get_value());
         assert!(!value.is_default().get());
-        assert_eq!(value.get_changed_value(), None);
+        assert_eq!(value.serialize(), Some(true));
+        assert!(!value.is_changed().get());
     }
 }

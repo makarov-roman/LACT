@@ -19,7 +19,7 @@ use adw::prelude::*;
 use amdgpu_sysfs::gpu_handle::{PerformanceLevel, power_profile_mode::PowerProfileModesTable};
 use heuristics_list::PowerProfileHeuristicsList;
 use i18n_embed_fl::fl;
-use lact_schema::PowerStats;
+use lact_schema::{PowerStats, config::GpuConfig};
 use nvml_wrapper::enums::device::PowerMizerMode;
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, WidgetTemplate,
@@ -126,7 +126,7 @@ impl relm4::Component for PowerFrame {
                             control: AdjustmentInit {
                                 unit: fl!(I18N, "watt"),
                                 value,
-                                default_value: Some(power.cap_default.unwrap_or_default()),
+                                default_value: power.cap_default,
                                 lower: power.cap_min.unwrap_or_default(),
                                 upper: power.cap_max.unwrap_or_default(),
                                 ..Default::default()
@@ -149,6 +149,11 @@ impl relm4::Component for PowerFrame {
                         SettingRowInit {
                             title: fl!(I18N, "performance-level"),
                             control: SelectInit {
+                                default_value: self
+                                    .performance_levels
+                                    .iter()
+                                    .position(|level| *level == PerformanceLevel::Auto)
+                                    .map(|index| index as u32),
                                 options: self
                                     .performance_levels
                                     .iter()
@@ -230,6 +235,11 @@ impl relm4::Component for PowerFrame {
                         SettingRowInit {
                             title: fl!(I18N, "power-mizer-mode"),
                             control: SelectInit {
+                                default_value: self
+                                    .supported_power_mizer_modes
+                                    .iter()
+                                    .position(|mode| *mode == PowerMizerMode::Auto)
+                                    .map(|index| index as u32),
                                 options: self
                                     .supported_power_mizer_modes
                                     .iter()
@@ -303,6 +313,38 @@ impl relm4::Component for PowerFrame {
 }
 
 impl PowerFrame {
+    pub fn serialize(&self) -> GpuConfig {
+        let value = |setting| self.rows.get(&setting).and_then(SettingRow::serialize);
+        let selected = |setting| value(setting).and_then(SettingRowValue::as_selected);
+        let power_profile_mode_index = selected(PowerSetting::PowerProfile)
+            .filter(|_| self.performance_level() == Some(PerformanceLevel::Manual))
+            .and_then(|index| {
+                self.power_profile_modes_table
+                    .as_ref()?
+                    .modes
+                    .keys()
+                    .nth(index as usize)
+                    .copied()
+            });
+        GpuConfig {
+            power_cap: value(PowerSetting::PowerCap).and_then(SettingRowValue::as_numeric),
+            performance_level: selected(PowerSetting::PerformanceLevel)
+                .and_then(|index| self.performance_levels.get(index as usize).copied()),
+            power_mizer_mode: selected(PowerSetting::PowerMizer).and_then(|index| {
+                self.supported_power_mizer_modes
+                    .get(index as usize)
+                    .copied()
+            }),
+            power_profile_mode_index,
+            custom_power_profile_mode_hueristics: if power_profile_mode_index.is_some() {
+                self.power_profile_mode_custom_heuristics()
+            } else {
+                Vec::new()
+            },
+            ..Default::default()
+        }
+    }
+
     fn selected(&self, setting: PowerSetting) -> Option<u32> {
         self.rows.get(&setting)?.get_value().as_selected()
     }
@@ -332,40 +374,13 @@ impl PowerFrame {
             .set_show_tabs(self.heuristics_components.len() > 1);
     }
 
-    pub fn get_user_cap(&self) -> Option<f64> {
-        self.rows
-            .get(&PowerSetting::PowerCap)?
-            .get_changed_value()?
-            .as_numeric()
-            .filter(|value| *value != 0.0)
-    }
-
     pub fn performance_level(&self) -> Option<PerformanceLevel> {
         self.performance_levels
             .get(self.selected(PowerSetting::PerformanceLevel)? as usize)
             .copied()
     }
 
-    pub fn active_power_mizer_mode(&self) -> Option<PowerMizerMode> {
-        self.supported_power_mizer_modes
-            .get(self.selected(PowerSetting::PowerMizer)? as usize)
-            .copied()
-    }
-
-    pub fn power_profile_mode(&self) -> Option<u16> {
-        if self.performance_level() == Some(PerformanceLevel::Manual) {
-            let table = self.power_profile_modes_table.as_ref()?;
-            table
-                .modes
-                .keys()
-                .nth(self.selected(PowerSetting::PowerProfile)? as usize)
-                .copied()
-        } else {
-            None
-        }
-    }
-
-    pub fn power_profile_mode_custom_heuristics(&self) -> Vec<Vec<Option<i32>>> {
+    fn power_profile_mode_custom_heuristics(&self) -> Vec<Vec<Option<i32>>> {
         if let Some(table) = &self.power_profile_modes_table
             && let Some(mode) = table.modes.get(&table.active)
             && mode.is_custom()
