@@ -20,15 +20,16 @@ pub enum BooleanControlMsg {
     Reset,
     SetVisible(bool),
     SetSensitive(bool),
-    AddSizeGroup {
-        label_group: gtk::SizeGroup,
-        input_group: Option<gtk::SizeGroup>,
-    },
 }
 
 #[relm4::component(pub)]
 impl Component for BooleanControl {
-    type Init = (BooleanInit, gtk::Box);
+    type Init = (
+        BooleanInit,
+        gtk::Box,
+        Option<gtk::SizeGroup>,
+        Option<gtk::SizeGroup>,
+    );
     type Input = BooleanControlMsg;
     type Output = ();
     type CommandOutput = ();
@@ -49,16 +50,25 @@ impl Component for BooleanControl {
     }
 
     fn init(
-        (init, title): Self::Init,
+        (init, title, label_group, input_group): Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let model = Self {
+        let mut model = Self {
             value: BooleanValue::new(init.value, init.default_value),
             title,
             size_group_widgets: Vec::new(),
         };
         let widgets = view_output!();
+        for (group, widget) in [
+            (label_group, model.title.clone().upcast::<gtk::Widget>()),
+            (input_group, widgets.switch.clone().upcast()),
+        ] {
+            if let Some(group) = group {
+                group.add_widget(&widget);
+                model.size_group_widgets.push((group, widget));
+            }
+        }
         model.value.binding().connect_value_notify(move |_| {
             sender.input(BooleanControlMsg::Changed);
         });
@@ -89,25 +99,6 @@ impl Component for BooleanControl {
                     }
                 }
                 root.set_visible(visible);
-            }
-            BooleanControlMsg::AddSizeGroup {
-                label_group,
-                input_group,
-            } => {
-                for (group, widget) in [
-                    (
-                        Some(label_group),
-                        self.title.clone().upcast::<gtk::Widget>(),
-                    ),
-                    (input_group, widgets.switch.clone().upcast()),
-                ] {
-                    if let Some(group) = group {
-                        if root.get_visible() {
-                            group.add_widget(&widget);
-                        }
-                        self.size_group_widgets.push((group, widget));
-                    }
-                }
             }
         }
     }

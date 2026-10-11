@@ -4,8 +4,8 @@ use crate::{
         components::{
             adjustment_card::AdjustmentCard,
             setting_row::{
-                AdjustmentControlMsg, AdjustmentInit, SelectInit, SettingControl, SettingRow,
-                SettingRowInit, SettingRowMsg, SettingRowValue,
+                AdjustmentInit, SelectInit, SettingRow, SettingRowInit, SettingRowMsg,
+                SettingRowValue,
             },
         },
         graphs_window::plot::PlotColorScheme,
@@ -29,8 +29,7 @@ use plotters::{
 };
 use plotters_cairo::CairoBackend;
 use relm4::{
-    ComponentController, ComponentParts, ComponentSender, RelmWidgetExt, WidgetTemplate,
-    factory::FactoryHashMap,
+    ComponentParts, ComponentSender, RelmWidgetExt, WidgetTemplate, factory::FactoryHashMap,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -254,19 +253,30 @@ impl relm4::Component for FanCurveFrame {
 
                 self.temp_keys = temp_keys;
                 self.adjustments.clear();
+                let lower_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
+                let upper_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
                 let auto_threshold_available =
                     msg.auto_threshold_supported && *msg.temperature_range.end() != 0.0;
                 if !msg.hw_based && self.temp_keys.len() > 1 && !auto_threshold_available {
                     self.adjustments.insert(
                         CurveSetting::TemperatureSensor,
-                        SettingRowInit::new(
-                            fl!(I18N, "temperature-sensor"),
-                            SelectInit {
-                                options: self.temp_keys.iter().cloned().map(Into::into).collect(),
-                                selected: selected_idx.map(|index| index as u32),
-                                ..Default::default()
-                            },
-                        ),
+                        SettingRowInit {
+                            label_group: Some(self.label_size_group.clone()),
+                            input_group: Some(self.input_size_group.clone()),
+                            ..SettingRowInit::new(
+                                fl!(I18N, "temperature-sensor"),
+                                SelectInit {
+                                    options: self
+                                        .temp_keys
+                                        .iter()
+                                        .cloned()
+                                        .map(Into::into)
+                                        .collect(),
+                                    selected: selected_idx.map(|index| index as u32),
+                                    ..Default::default()
+                                },
+                            )
+                        },
                     );
                 }
                 if !msg.hw_based {
@@ -274,6 +284,8 @@ impl relm4::Component for FanCurveFrame {
                         CurveSetting::SpindownDelay,
                         SettingRowInit {
                             title_tooltip: fl!(I18N, "spindown-delay-tooltip"),
+                            label_group: Some(self.label_size_group.clone()),
+                            input_group: Some(self.input_size_group.clone()),
                             ..SettingRowInit::new(
                                 glib::markup_escape_text(&fl!(I18N, "spindown-delay")).into(),
                                 AdjustmentInit {
@@ -283,6 +295,8 @@ impl relm4::Component for FanCurveFrame {
                                     upper: 30_000.0,
                                     step_increment: 10.0,
                                     page_increment: 10.0,
+                                    lower_label_group: Some(lower_label_group.clone()),
+                                    upper_label_group: Some(upper_label_group.clone()),
                                     ..Default::default()
                                 },
                             )
@@ -290,17 +304,24 @@ impl relm4::Component for FanCurveFrame {
                     );
                     self.adjustments.insert(
                         CurveSetting::ChangeThreshold,
-                        SettingRowInit::new(
-                            glib::markup_escape_text(&fl!(I18N, "speed-change-threshold")).into(),
-                            AdjustmentInit {
-                                value: msg.change_threshold.unwrap_or(DEFAULT_CHANGE_THRESHOLD)
-                                    as f64,
-                                default_value: Some(DEFAULT_CHANGE_THRESHOLD as f64),
-                                upper: 10.0,
-                                page_increment: 1.0,
-                                ..Default::default()
-                            },
-                        ),
+                        SettingRowInit {
+                            label_group: Some(self.label_size_group.clone()),
+                            input_group: Some(self.input_size_group.clone()),
+                            ..SettingRowInit::new(
+                                glib::markup_escape_text(&fl!(I18N, "speed-change-threshold"))
+                                    .into(),
+                                AdjustmentInit {
+                                    value: msg.change_threshold.unwrap_or(DEFAULT_CHANGE_THRESHOLD)
+                                        as f64,
+                                    default_value: Some(DEFAULT_CHANGE_THRESHOLD as f64),
+                                    upper: 10.0,
+                                    page_increment: 1.0,
+                                    lower_label_group: Some(lower_label_group.clone()),
+                                    upper_label_group: Some(upper_label_group.clone()),
+                                    ..Default::default()
+                                },
+                            )
+                        },
                     );
                 }
                 if auto_threshold_available {
@@ -308,6 +329,8 @@ impl relm4::Component for FanCurveFrame {
                         CurveSetting::AutoThreshold,
                         SettingRowInit {
                             title_tooltip: fl!(I18N, "automatic-mode-threshold-tooltip"),
+                            label_group: Some(self.label_size_group.clone()),
+                            input_group: Some(self.input_size_group.clone()),
                             ..SettingRowInit::new(
                                 glib::markup_escape_text(&fl!(I18N, "automatic-mode-threshold"))
                                     .into(),
@@ -316,6 +339,8 @@ impl relm4::Component for FanCurveFrame {
                                         as f64,
                                     upper: *msg.temperature_range.end() as f64,
                                     page_increment: 5.0,
+                                    lower_label_group: Some(lower_label_group.clone()),
+                                    upper_label_group: Some(upper_label_group.clone()),
                                     ..Default::default()
                                 },
                             )
@@ -323,23 +348,6 @@ impl relm4::Component for FanCurveFrame {
                     );
                 }
 
-                let lower_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
-                let upper_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
-                for (key, row) in self.adjustments.iter() {
-                    self.adjustments.send(
-                        key,
-                        SettingRowMsg::AddSizeGroup {
-                            label_group: self.label_size_group.clone(),
-                            input_group: Some(self.input_size_group.clone()),
-                        },
-                    );
-                    if let SettingControl::Adjustment(control) = &row.control {
-                        control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
-                            lower_label_group: lower_label_group.clone(),
-                            upper_label_group: upper_label_group.clone(),
-                        });
-                    }
-                }
                 widgets.drawing_area.queue_draw();
             }
             FanCurveFrameMsg::DragStart => {
@@ -624,7 +632,7 @@ fn draw_chart<const I: usize>(
 mod tests {
     use super::*;
     use crate::app::test_utils::find_widget;
-    use relm4::Component;
+    use relm4::{Component, ComponentController};
 
     #[test]
     #[ignore = "requires a GTK display; run explicitly with --ignored"]

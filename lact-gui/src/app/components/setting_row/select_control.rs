@@ -42,15 +42,16 @@ pub enum SelectControlMsg {
     SetVisible(bool),
     /// Enable selection changes while keeping the details popover accessible.
     SetSensitive(bool),
-    AddSizeGroup {
-        label_group: gtk::SizeGroup,
-        input_group: Option<gtk::SizeGroup>,
-    },
 }
 
 #[relm4::component(pub)]
 impl Component for SelectControl {
-    type Init = (SelectInit, gtk::Box);
+    type Init = (
+        SelectInit,
+        gtk::Box,
+        Option<gtk::SizeGroup>,
+        Option<gtk::SizeGroup>,
+    );
     type Input = SelectControlMsg;
     type Output = ();
     type CommandOutput = ();
@@ -99,7 +100,7 @@ impl Component for SelectControl {
     }
 
     fn init(
-        (init, title): Self::Init,
+        (init, title, label_group, input_group): Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
@@ -118,6 +119,15 @@ impl Component for SelectControl {
             change_signal: None,
         };
         let widgets = view_output!();
+        for (group, widget) in [
+            (label_group, model.title.clone().upcast::<gtk::Widget>()),
+            (input_group, widgets.dropdown.clone().upcast()),
+        ] {
+            if let Some(group) = group {
+                group.add_widget(&widget);
+                model.size_group_widgets.push((group, widget));
+            }
+        }
         model.change_signal = Some(model.value.binding().connect_value_notify(move |_| {
             sender.input(SelectControlMsg::Changed);
         }));
@@ -148,25 +158,6 @@ impl Component for SelectControl {
                     }
                 }
                 root.set_visible(visible);
-            }
-            SelectControlMsg::AddSizeGroup {
-                label_group,
-                input_group,
-            } => {
-                for (group, widget) in [
-                    (
-                        Some(label_group),
-                        self.title.clone().upcast::<gtk::Widget>(),
-                    ),
-                    (input_group, widgets.dropdown.clone().upcast()),
-                ] {
-                    if let Some(group) = group {
-                        if root.get_visible() {
-                            group.add_widget(&widget);
-                        }
-                        self.size_group_widgets.push((group, widget));
-                    }
-                }
             }
         }
         self.update_view(widgets, sender);

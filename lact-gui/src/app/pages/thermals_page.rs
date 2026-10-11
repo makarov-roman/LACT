@@ -11,8 +11,8 @@ use crate::{
             adjustment_card::AdjustmentCard,
             page_section::PageSection,
             setting_row::{
-                AdjustmentControlMsg, AdjustmentInit, BooleanInit, SettingControl, SettingRow,
-                SettingRowInit, SettingRowMsg, SettingRowValue,
+                AdjustmentInit, BooleanInit, SettingRow, SettingRowInit, SettingRowMsg,
+                SettingRowValue,
             },
         },
         msg::AppMsg,
@@ -351,19 +351,19 @@ impl relm4::Component for ThermalsPage {
                             if let Some(init) = fan_info_init(info) {
                                 self.pmfw_rows.insert(
                                     setting,
-                                    SettingRowInit::new(
-                                        glib::markup_escape_text(&title).into(),
-                                        init,
-                                    ),
+                                    SettingRowInit {
+                                        label_group: Some(self.label_size_group.clone()),
+                                        input_group: Some(self.input_size_group.clone()),
+                                        ..SettingRowInit::new(
+                                            glib::markup_escape_text(&title).into(),
+                                            AdjustmentInit {
+                                                lower_label_group: Some(lower_label_group.clone()),
+                                                upper_label_group: Some(upper_label_group.clone()),
+                                                ..init
+                                            },
+                                        )
+                                    },
                                 );
-                                if let SettingControl::Adjustment(control) =
-                                    &self.pmfw_rows[&setting].control
-                                {
-                                    control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
-                                        lower_label_group: lower_label_group.clone(),
-                                        upper_label_group: upper_label_group.clone(),
-                                    });
-                                }
                             }
                         }
                         if let Some(mut init) = fan_info_init(stats.nvidia_thermal_info.target_temp)
@@ -372,66 +372,50 @@ impl relm4::Component for ThermalsPage {
                                 stats.nvidia_thermal_info.target_temp_default.map(f64::from);
                             self.nvidia_target_temperature.insert(
                                 (),
-                                SettingRowInit::new(
-                                    glib::markup_escape_text(&fl!(I18N, "target-temp")).into(),
-                                    init,
-                                ),
+                                SettingRowInit {
+                                    label_group: Some(self.label_size_group.clone()),
+                                    input_group: Some(self.input_size_group.clone()),
+                                    ..SettingRowInit::new(
+                                        glib::markup_escape_text(&fl!(I18N, "target-temp")).into(),
+                                        AdjustmentInit {
+                                            lower_label_group: Some(lower_label_group.clone()),
+                                            upper_label_group: Some(upper_label_group.clone()),
+                                            ..init
+                                        },
+                                    )
+                                },
                             );
-                            if let SettingControl::Adjustment(control) =
-                                &self.nvidia_target_temperature[&()].control
-                            {
-                                control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
-                                    lower_label_group: lower_label_group.clone(),
-                                    upper_label_group: upper_label_group.clone(),
-                                });
-                            }
                         }
                         if let Some(value) = info.zero_rpm_enable {
                             self.pmfw_rows.insert(
                                 ThermalSetting::ZeroRpmEnabled,
-                                SettingRowInit::new(
-                                    glib::markup_escape_text(&fl!(I18N, "zero-rpm")).into(),
-                                    BooleanInit {
-                                        value,
-                                        ..Default::default()
-                                    },
-                                ),
+                                SettingRowInit {
+                                    label_group: Some(self.label_size_group.clone()),
+                                    ..SettingRowInit::new(
+                                        glib::markup_escape_text(&fl!(I18N, "zero-rpm")).into(),
+                                        BooleanInit {
+                                            value,
+                                            ..Default::default()
+                                        },
+                                    )
+                                },
                             );
                         }
                         if let Some(init) = fan_info_init(info.zero_rpm_temperature) {
                             self.pmfw_rows.insert(
                                 ThermalSetting::ZeroRpmTemperature,
-                                SettingRowInit::new(
-                                    glib::markup_escape_text(&fl!(I18N, "zero-rpm-stop-temp"))
-                                        .into(),
-                                    init,
-                                ),
-                            );
-                            if let SettingControl::Adjustment(control) =
-                                &self.pmfw_rows[&ThermalSetting::ZeroRpmTemperature].control
-                            {
-                                control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
-                                    lower_label_group: lower_label_group.clone(),
-                                    upper_label_group: upper_label_group.clone(),
-                                });
-                            }
-                        }
-                        for key in self.pmfw_rows.keys() {
-                            self.pmfw_rows.send(
-                                key,
-                                SettingRowMsg::AddSizeGroup {
-                                    label_group: self.label_size_group.clone(),
-                                    input_group: (*key != ThermalSetting::ZeroRpmEnabled)
-                                        .then(|| self.input_size_group.clone()),
-                                },
-                            );
-                        }
-                        if !self.nvidia_target_temperature.is_empty() {
-                            self.nvidia_target_temperature.send(
-                                &(),
-                                SettingRowMsg::AddSizeGroup {
-                                    label_group: self.label_size_group.clone(),
+                                SettingRowInit {
+                                    label_group: Some(self.label_size_group.clone()),
                                     input_group: Some(self.input_size_group.clone()),
+                                    ..SettingRowInit::new(
+                                        glib::markup_escape_text(&fl!(I18N, "zero-rpm-stop-temp"))
+                                            .into(),
+                                        AdjustmentInit {
+                                            lower_label_group: Some(lower_label_group.clone()),
+                                            upper_label_group: Some(upper_label_group.clone()),
+                                            ..init
+                                        },
+                                    )
                                 },
                             );
                         }
@@ -717,7 +701,6 @@ mod tests {
                             allowed_range: Some((60, 95)),
                         }),
                         target_temp_default: default,
-                        ..Default::default()
                     },
                     ..Default::default()
                 })),

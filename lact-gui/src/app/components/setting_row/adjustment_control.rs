@@ -11,6 +11,8 @@ pub struct AdjustmentInit {
     pub upper: f64,
     pub step_increment: f64,
     pub page_increment: f64,
+    pub lower_label_group: Option<gtk::SizeGroup>,
+    pub upper_label_group: Option<gtk::SizeGroup>,
 }
 
 impl Default for AdjustmentInit {
@@ -23,6 +25,8 @@ impl Default for AdjustmentInit {
             upper: 0.0,
             step_increment: 1.0,
             page_increment: 10.0,
+            lower_label_group: None,
+            upper_label_group: None,
         }
     }
 }
@@ -42,19 +46,16 @@ pub enum AdjustmentControlMsg {
     Reset,
     SetVisible(bool),
     SetSensitive(bool),
-    AddSizeGroup {
-        label_group: gtk::SizeGroup,
-        input_group: Option<gtk::SizeGroup>,
-    },
-    AddBoundsSizeGroup {
-        lower_label_group: gtk::SizeGroup,
-        upper_label_group: gtk::SizeGroup,
-    },
 }
 
 #[relm4::component(pub)]
 impl Component for AdjustmentControl {
-    type Init = (AdjustmentInit, gtk::Box);
+    type Init = (
+        AdjustmentInit,
+        gtk::Box,
+        Option<gtk::SizeGroup>,
+        Option<gtk::SizeGroup>,
+    );
     type Input = AdjustmentControlMsg;
     type Output = ();
     type CommandOutput = ();
@@ -114,11 +115,11 @@ impl Component for AdjustmentControl {
     }
 
     fn init(
-        (init, title): Self::Init,
+        (init, title, label_group, input_group): Self::Init,
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let model = Self {
+        let mut model = Self {
             value: AdjustmentValue::new(
                 init.value,
                 init.default_value,
@@ -133,6 +134,17 @@ impl Component for AdjustmentControl {
         };
         let adjustment = &*model.value;
         let widgets = view_output!();
+        for (group, widget) in [
+            (label_group, model.title.clone().upcast::<gtk::Widget>()),
+            (input_group, widgets.spinbutton.clone().upcast()),
+            (init.lower_label_group, widgets.lower_label.clone().upcast()),
+            (init.upper_label_group, widgets.upper_label.clone().upcast()),
+        ] {
+            if let Some(group) = group {
+                group.add_widget(&widget);
+                model.size_group_widgets.push((group, widget));
+            }
+        }
         ComponentParts { model, widgets }
     }
 
@@ -178,40 +190,6 @@ impl Component for AdjustmentControl {
                     }
                 }
                 root.set_visible(visible);
-            }
-            AdjustmentControlMsg::AddSizeGroup {
-                label_group,
-                input_group,
-            } => {
-                for (group, widget) in [
-                    (
-                        Some(label_group),
-                        self.title.clone().upcast::<gtk::Widget>(),
-                    ),
-                    (input_group, widgets.spinbutton.clone().upcast()),
-                ] {
-                    if let Some(group) = group {
-                        if root.get_visible() {
-                            group.add_widget(&widget);
-                        }
-                        self.size_group_widgets.push((group, widget));
-                    }
-                }
-            }
-            AdjustmentControlMsg::AddBoundsSizeGroup {
-                lower_label_group,
-                upper_label_group,
-            } => {
-                let groups = [
-                    (lower_label_group, widgets.lower_label.clone().upcast()),
-                    (upper_label_group, widgets.upper_label.clone().upcast()),
-                ];
-                if root.get_visible() {
-                    for (group, widget) in &groups {
-                        group.add_widget(widget);
-                    }
-                }
-                self.size_group_widgets.extend(groups);
             }
         }
     }

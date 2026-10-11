@@ -42,6 +42,10 @@ pub struct ClocksFrame {
     has_power_states: bool,
     active_power_state: Option<PowerLevelId>,
     current_clock: Option<u64>,
+    label_size_group: gtk::SizeGroup,
+    input_size_group: gtk::SizeGroup,
+    lower_label_group: gtk::SizeGroup,
+    upper_label_group: gtk::SizeGroup,
 }
 
 #[derive(Default)]
@@ -306,6 +310,10 @@ impl relm4::Component for ClocksFrame {
             has_power_states: false,
             active_power_state: None,
             current_clock: None,
+            label_size_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
+            input_size_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
+            lower_label_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
+            upper_label_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
         };
 
         for binding in [
@@ -362,27 +370,6 @@ impl relm4::Component for ClocksFrame {
                         ClocksTable::Amd(table) => self.set_amd_table(table),
                         ClocksTable::Nvidia(table) => self.set_nvidia_table(table),
                         ClocksTable::Intel(table) => self.set_intel_table(table),
-                    }
-                }
-
-                let label_size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
-                let input_size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
-                let lower_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
-                let upper_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
-
-                for (key, row) in self.adjustments.iter() {
-                    self.adjustments.send(
-                        key,
-                        SettingRowMsg::AddSizeGroup {
-                            label_group: label_size_group.clone(),
-                            input_group: Some(input_size_group.clone()),
-                        },
-                    );
-                    if let SettingControl::Adjustment(control) = &row.control {
-                        control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
-                            lower_label_group: lower_label_group.clone(),
-                            upper_label_group: upper_label_group.clone(),
-                        });
                     }
                 }
 
@@ -478,6 +465,8 @@ impl ClocksFrame {
         self.adjustments.insert(
             clock_type,
             SettingRowInit {
+                label_group: Some(self.label_size_group.clone()),
+                input_group: Some(self.input_size_group.clone()),
                 info_text: if clock_type == ClockspeedType::VoltageBoost {
                     fl!(I18N, "gpu-voltage-boost-tooltip")
                 } else {
@@ -493,6 +482,8 @@ impl ClocksFrame {
                         lower: f64::from(data.min),
                         upper: f64::from(data.max),
                         step_increment: get_row_step(clock_type),
+                        lower_label_group: Some(self.lower_label_group.clone()),
+                        upper_label_group: Some(self.upper_label_group.clone()),
                         ..Default::default()
                     },
                 )

@@ -124,31 +124,44 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
 }
 
 fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainContext) {
+    // Both row kinds share title/input sizing; only numeric rows have bound labels.
+    let groups: [gtk::SizeGroup; 4] =
+        std::array::from_fn(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal));
     let (output, receiver) = relm4::channel();
     let mut rows = FactoryHashMap::<u8, SettingRow<u8>>::builder()
         .launch_default()
         .forward(&output, |()| ());
     rows.insert(
         0,
-        SettingRowInit::new(
-            "Enabled".into(),
-            BooleanInit {
-                value: true,
-                default_value: Some(false),
-            },
-        ),
+        SettingRowInit {
+            label_group: Some(groups[0].clone()),
+            input_group: Some(groups[1].clone()),
+            ..SettingRowInit::new(
+                "Enabled".into(),
+                BooleanInit {
+                    value: true,
+                    default_value: Some(false),
+                },
+            )
+        },
     );
     rows.insert(
         1,
-        SettingRowInit::new(
-            "Temperature".into(),
-            AdjustmentInit {
-                value: 50.0,
-                default_value: Some(25.0),
-                upper: 100.0,
-                ..Default::default()
-            },
-        ),
+        SettingRowInit {
+            label_group: Some(groups[0].clone()),
+            input_group: Some(groups[1].clone()),
+            ..SettingRowInit::new(
+                "Temperature".into(),
+                AdjustmentInit {
+                    value: 50.0,
+                    default_value: Some(25.0),
+                    upper: 100.0,
+                    lower_label_group: Some(groups[2].clone()),
+                    upper_label_group: Some(groups[3].clone()),
+                    ..Default::default()
+                },
+            )
+        },
     );
     drain(context);
     let bool_root = rows.widget().row_at_index(0).unwrap();
@@ -184,26 +197,9 @@ fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainCont
     assert!(!switch.is_active());
     assert_eq!(rows[&0].get_changed_value(), None);
 
-    // Both row kinds share title/input sizing; only numeric rows have bound labels.
-    let groups: [gtk::SizeGroup; 4] =
-        std::array::from_fn(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal));
     for key in [0, 1] {
-        rows.send(
-            &key,
-            SettingRowMsg::AddSizeGroup {
-                label_group: groups[0].clone(),
-                input_group: Some(groups[1].clone()),
-            },
-        );
         rows.send(&key, SettingRowMsg::SetSensitive(false));
     }
-    let SettingControl::Adjustment(control) = &rows[&1].control else {
-        unreachable!()
-    };
-    control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
-        lower_label_group: groups[2].clone(),
-        upper_label_group: groups[3].clone(),
-    });
     drain(context);
     assert!(!switch.is_sensitive());
     assert!(!spin.is_sensitive());
@@ -267,30 +263,36 @@ fn row_forwards_edits_and_shuts_down_replaced_controls(context: &gtk::glib::Main
 }
 
 fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainContext) {
+    let groups: [gtk::SizeGroup; 2] =
+        std::array::from_fn(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal));
     let (output, receiver) = relm4::channel();
     let mut rows = FactoryHashMap::<(), SettingRow<()>>::builder()
         .launch_default()
         .forward(&output, |()| ());
     rows.insert(
         (),
-        SettingRowInit::new(
-            "Mode".into(),
-            SelectInit {
-                options: vec![
-                    SelectOption {
-                        label: "Auto".into(),
-                        description: "Automatic clocks".into(),
-                    },
-                    SelectOption {
-                        label: "Manual".into(),
-                        description: "Manual clocks".into(),
-                    },
-                ],
-                selected: Some(1),
-                default_value: Some(0),
-                ..Default::default()
-            },
-        ),
+        SettingRowInit {
+            label_group: Some(groups[0].clone()),
+            input_group: Some(groups[1].clone()),
+            ..SettingRowInit::new(
+                "Mode".into(),
+                SelectInit {
+                    options: vec![
+                        SelectOption {
+                            label: "Auto".into(),
+                            description: "Automatic clocks".into(),
+                        },
+                        SelectOption {
+                            label: "Manual".into(),
+                            description: "Manual clocks".into(),
+                        },
+                    ],
+                    selected: Some(1),
+                    default_value: Some(0),
+                    ..Default::default()
+                },
+            )
+        },
     );
     drain(context);
     let root = rows.widget().row_at_index(0).unwrap();
@@ -305,15 +307,6 @@ fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainCo
     };
     let description = control.widgets().description_label.clone();
     assert_eq!(description.text(), "Manual clocks");
-    let groups: [gtk::SizeGroup; 2] =
-        std::array::from_fn(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal));
-    rows.send(
-        &(),
-        SettingRowMsg::AddSizeGroup {
-            label_group: groups[0].clone(),
-            input_group: Some(groups[1].clone()),
-        },
-    );
     rows.send(&(), SettingRowMsg::SetSensitive(false));
     drain(context);
     assert!(!dropdown.is_sensitive());

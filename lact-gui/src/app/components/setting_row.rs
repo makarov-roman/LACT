@@ -24,6 +24,8 @@ pub struct SettingRowInit {
     pub title: String,
     pub title_tooltip: String,
     pub info_text: String,
+    pub label_group: Option<gtk::SizeGroup>,
+    pub input_group: Option<gtk::SizeGroup>,
     pub control: SettingControlInit,
 }
 
@@ -33,6 +35,8 @@ impl SettingRowInit {
             title,
             title_tooltip: String::new(),
             info_text: String::new(),
+            label_group: None,
+            input_group: None,
             control: control.into(),
         }
     }
@@ -162,21 +166,23 @@ pub enum SettingControl {
 }
 
 impl SettingControl {
-    fn new(init: SettingControlInit, title: gtk::Box, output: &relm4::Sender<()>) -> Self {
-        match init {
+    fn new(init: SettingRowInit, title: gtk::Box, output: &relm4::Sender<()>) -> Self {
+        let label_group = init.label_group;
+        let input_group = init.input_group;
+        match init.control {
             SettingControlInit::Adjustment(init) => Self::Adjustment(
                 AdjustmentControl::builder()
-                    .launch((init, title))
+                    .launch((init, title, label_group, input_group))
                     .forward(output, |()| ()),
             ),
             SettingControlInit::Boolean(init) => Self::Boolean(
                 BooleanControl::builder()
-                    .launch((init, title))
+                    .launch((init, title, label_group, input_group))
                     .forward(output, |()| ()),
             ),
             SettingControlInit::Select(init) => Self::Select(
                 SelectControl::builder()
-                    .launch((init, title))
+                    .launch((init, title, label_group, input_group))
                     .forward(output, |()| ()),
             ),
         }
@@ -215,23 +221,6 @@ impl SettingControl {
             Self::Select(control) => control.emit(SelectControlMsg::SetSensitive(sensitive)),
         }
     }
-
-    fn add_size_group(&self, label_group: gtk::SizeGroup, input_group: Option<gtk::SizeGroup>) {
-        match self {
-            Self::Adjustment(control) => control.emit(AdjustmentControlMsg::AddSizeGroup {
-                label_group,
-                input_group,
-            }),
-            Self::Boolean(control) => control.emit(BooleanControlMsg::AddSizeGroup {
-                label_group,
-                input_group,
-            }),
-            Self::Select(control) => control.emit(SelectControlMsg::AddSizeGroup {
-                label_group,
-                input_group,
-            }),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -241,10 +230,6 @@ pub enum SettingRowMsg {
     SetVisible(bool),
     /// Enable editing while leaving informational popovers accessible.
     SetSensitive(bool),
-    AddSizeGroup {
-        label_group: gtk::SizeGroup,
-        input_group: Option<gtk::SizeGroup>,
-    },
 }
 
 #[relm4::factory(pub)]
@@ -275,7 +260,7 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
     fn init_model(init: Self::Init, _index: &Self::Index, sender: FactorySender<Self>) -> Self {
         let title = init.title_widget();
         Self {
-            control: SettingControl::new(init.control, title, sender.output_sender()),
+            control: SettingControl::new(init, title, sender.output_sender()),
             _key: PhantomData,
         }
     }
@@ -301,10 +286,6 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
             SettingRowMsg::Reset => self.control.reset(),
             SettingRowMsg::SetValue(value) => self.set_value(value),
             SettingRowMsg::SetSensitive(sensitive) => self.control.set_sensitive(sensitive),
-            SettingRowMsg::AddSizeGroup {
-                label_group,
-                input_group,
-            } => self.control.add_size_group(label_group, input_group),
             SettingRowMsg::SetVisible(visible) => {
                 self.control.set_visible(visible);
                 widgets.root_row.set_visible(visible);
