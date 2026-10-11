@@ -4,8 +4,8 @@ use crate::{
         components::{
             adjustment_card::AdjustmentCard,
             setting_row::{
-                AdjustmentControlMsg, AdjustmentInit, SettingControl, SettingRow, SettingRowInit,
-                SettingRowMsg, SettingRowValue,
+                AdjustmentControlMsg, AdjustmentInit, SelectInit, SettingControl, SettingRow,
+                SettingRowInit, SettingRowMsg, SettingRowValue,
             },
         },
         graphs_window::plot::PlotColorScheme,
@@ -29,8 +29,8 @@ use plotters::{
 };
 use plotters_cairo::CairoBackend;
 use relm4::{
-    ComponentController, ComponentParts, ComponentSender, RelmObjectExt, RelmWidgetExt,
-    WidgetTemplate, binding::U32Binding, factory::FactoryHashMap,
+    ComponentController, ComponentParts, ComponentSender, RelmWidgetExt, WidgetTemplate,
+    factory::FactoryHashMap,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -54,8 +54,7 @@ pub(super) struct FanCurveFrame {
     /// PMFW fan control on AMD RDNA3+ with fixed length
     hw_based_fan_curve: bool,
     chart: Rc<ChartState>,
-    temp_keys: gtk::StringList,
-    current_temp_key: U32Binding,
+    temp_keys: Vec<String>,
 }
 
 struct ChartState {
@@ -77,6 +76,7 @@ struct ChartState {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum CurveSetting {
+    TemperatureSensor,
     SpindownDelay,
     ChangeThreshold,
     AutoThreshold,
@@ -179,39 +179,10 @@ impl relm4::Component for FanCurveFrame {
                 },
             },
 
-            gtk::Box {
-                set_orientation: gtk::Orientation::Horizontal,
-                add_css_class: "fan-control-option",
-                set_spacing: 5,
-                #[watch]
-                set_visible: model.temp_keys_available(),
-
-                gtk::Label {
-                    set_label: &fl!(I18N, "temperature-sensor"),
-                    set_size_group: &model.label_size_group,
-                    set_xalign: 0.0,
-                },
-
-                #[name = "temp_key_dropdown"]
-                gtk::DropDown {
-                    set_hexpand: true,
-                    set_halign: gtk::Align::End,
-                    add_binding: (&model.current_temp_key, "selected"),
-                    set_model: Some(&model.temp_keys),
-                },
-            },
-
             model.adjustments.widget().clone() -> gtk::ListBox {
                 #[watch]
                 set_visible: !model.adjustments.is_empty(),
             },
-        },
-
-        #[local_ref]
-        current_temp_key -> U32Binding {
-            connect_value_notify => move |_| {
-                APP_BROKER.send(AppMsg::SettingsChanged);
-            } @ temp_key_change_signal,
         },
     }
 
@@ -226,9 +197,6 @@ impl relm4::Component for FanCurveFrame {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        let temp_keys = gtk::StringList::default();
-        let current_temp_key = U32Binding::new(0u32);
-
         let model = Self {
             adjustments: FactoryHashMap::builder()
                 .launch(AdjustmentCard::init(()).content.clone())
@@ -246,11 +214,9 @@ impl relm4::Component for FanCurveFrame {
                 hover_coord: Cell::default(),
                 hover_point: Cell::default(),
             }),
-            temp_keys,
-            current_temp_key,
+            temp_keys: Vec::new(),
         };
 
-        let current_temp_key = &model.current_temp_key;
         let widgets = view_output!();
 
         ComponentParts { model, widgets }
@@ -272,9 +238,6 @@ impl relm4::Component for FanCurveFrame {
                 *self.chart.temperature_range.borrow_mut() = msg.temperature_range.clone();
                 self.hw_based_fan_curve = msg.hw_based;
 
-                self.current_temp_key
-                    .block_signal(&widgets.temp_key_change_signal);
-
                 let mut temp_keys = msg
                     .current_temperatures
                     .into_iter()
@@ -289,20 +252,23 @@ impl relm4::Component for FanCurveFrame {
                     .or_else(|| temp_keys.iter().position(|key| key == "edge"))
                     .or(if temp_keys.is_empty() { None } else { Some(0) });
 
-                while self.temp_keys.n_items() > 0 {
-                    self.temp_keys.remove(0);
-                }
-                for key in temp_keys {
-                    self.temp_keys.append(&key);
-                }
-
-                if let Some(idx) = selected_idx {
-                    widgets.temp_key_dropdown.set_selected(idx as u32);
-                }
-
-                self.current_temp_key
-                    .unblock_signal(&widgets.temp_key_change_signal);
+                self.temp_keys = temp_keys;
                 self.adjustments.clear();
+                let auto_threshold_available =
+                    msg.auto_threshold_supported && *msg.temperature_range.end() != 0.0;
+                if !msg.hw_based && self.temp_keys.len() > 1 && !auto_threshold_available {
+                    self.adjustments.insert(
+                        CurveSetting::TemperatureSensor,
+                        SettingRowInit::new(
+                            fl!(I18N, "temperature-sensor"),
+                            SelectInit {
+                                options: self.temp_keys.iter().cloned().map(Into::into).collect(),
+                                selected: selected_idx.map(|index| index as u32),
+                                ..Default::default()
+                            },
+                        ),
+                    );
+                }
                 if !msg.hw_based {
                     self.adjustments.insert(
                         CurveSetting::SpindownDelay,
@@ -337,7 +303,7 @@ impl relm4::Component for FanCurveFrame {
                         ),
                     );
                 }
-                if msg.auto_threshold_supported && *msg.temperature_range.end() != 0.0 {
+                if auto_threshold_available {
                     self.adjustments.insert(
                         CurveSetting::AutoThreshold,
                         SettingRowInit {
@@ -359,11 +325,16 @@ impl relm4::Component for FanCurveFrame {
 
                 let lower_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
                 let upper_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
-                for row in self.adjustments.values() {
-                    if let SettingControl::Adjustment(control) = &row.control {
-                        control.emit(AdjustmentControlMsg::AddSizeGroup {
+                for (key, row) in self.adjustments.iter() {
+                    self.adjustments.send(
+                        key,
+                        SettingRowMsg::AddSizeGroup {
                             label_group: self.label_size_group.clone(),
-                            input_group: self.input_size_group.clone(),
+                            input_group: Some(self.input_size_group.clone()),
+                        },
+                    );
+                    if let SettingControl::Adjustment(control) = &row.control {
+                        control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
                             lower_label_group: lower_label_group.clone(),
                             upper_label_group: upper_label_group.clone(),
                         });
@@ -452,13 +423,12 @@ impl FanCurveFrame {
     }
 
     pub fn temperature_key(&self) -> Option<String> {
-        if self.temp_keys_available() {
-            self.temp_keys
-                .string(self.current_temp_key.value())
-                .map(|obj| obj.to_string())
-        } else {
-            None
-        }
+        let index = self
+            .adjustments
+            .get(&CurveSetting::TemperatureSensor)?
+            .get_value()
+            .as_selected()?;
+        self.temp_keys.get(index as usize).cloned()
     }
 
     pub fn auto_threshold(&self) -> Option<u64> {
@@ -467,12 +437,6 @@ impl FanCurveFrame {
             .and_then(|row| row.get_changed_value())
             .and_then(SettingRowValue::as_numeric)
             .map(|value| value as u64)
-    }
-
-    fn temp_keys_available(&self) -> bool {
-        !self.hw_based_fan_curve
-            && self.temp_keys.n_items() > 1
-            && self.adjustments.get(&CurveSetting::AutoThreshold).is_none() // Disable key selection on nvidia
     }
 
     fn edit_curve(&self, f: impl FnOnce(&mut Vec<(i32, f32)>), widgets: &FanCurveFrameWidgets) {
@@ -654,4 +618,99 @@ fn draw_chart<const I: usize>(
     root.present().unwrap();
 
     mapped_coords
+}
+
+#[cfg(all(test, feature = "gtk-tests"))]
+mod tests {
+    use super::*;
+    use crate::app::test_utils::find_widget;
+    use relm4::Component;
+
+    #[test]
+    #[ignore = "requires a GTK display; run explicitly with --ignored"]
+    fn sensor_row_preserves_keys_and_clears_on_device_reload() {
+        adw::init().unwrap();
+        let context = glib::MainContext::default();
+        let _guard = context.acquire().unwrap();
+        let drain = || {
+            while context.pending() {
+                context.iteration(false);
+            }
+        };
+        let frame = FanCurveFrame::builder().launch(()).detach();
+        let setup = |hw_based, auto_threshold_supported, temperature_key: &str| CurveSetupMsg {
+            curve: default_fan_curve(),
+            hw_based,
+            current_temperatures: ["junction", "edge", "display-only"]
+                .into_iter()
+                .map(|key| {
+                    (
+                        key.to_owned(),
+                        TemperatureEntry {
+                            value: amdgpu_sysfs::hw_mon::Temperature {
+                                current: Some(50.0),
+                                crit: None,
+                                crit_hyst: None,
+                            },
+                            primary: true,
+                            display_only: key == "display-only",
+                        },
+                    )
+                })
+                .collect(),
+            temperature_key: Some(temperature_key.to_owned()),
+            speed_range: DEFAULT_SPEED_RANGE,
+            temperature_range: DEFAULT_TEMP_RANGE,
+            spindown_delay: None,
+            change_threshold: None,
+            auto_threshold_supported,
+            auto_threshold: None,
+        };
+        frame.emit(FanCurveFrameMsg::Curve(setup(false, false, "junction")));
+        drain();
+        assert_eq!(frame.model().temperature_key().as_deref(), Some("junction"));
+        let dropdown = {
+            let rows = &frame.model().adjustments;
+            assert_eq!(rows.len(), 3);
+            assert!(rows.values().all(|row| row.get_changed_value().is_none()));
+            find_widget::<gtk::DropDown>(
+                rows[&CurveSetting::TemperatureSensor].widget().upcast_ref(),
+            )
+            .unwrap()
+        };
+        assert_eq!(dropdown.model().unwrap().n_items(), 2);
+        dropdown.set_selected(0);
+        drain();
+        assert_eq!(frame.model().temperature_key().as_deref(), Some("edge"));
+        frame.emit(FanCurveFrameMsg::DefaultCurve);
+        drain();
+        assert_eq!(frame.model().temperature_key().as_deref(), Some("edge"));
+
+        for (hw_based, auto_threshold_supported) in [(true, false), (false, true)] {
+            frame.emit(FanCurveFrameMsg::Curve(setup(
+                hw_based,
+                auto_threshold_supported,
+                "edge",
+            )));
+            drain();
+            assert_eq!(frame.model().temperature_key(), None);
+            assert!(
+                frame
+                    .model()
+                    .adjustments
+                    .get(&CurveSetting::TemperatureSensor)
+                    .is_none()
+            );
+        }
+        frame.emit(FanCurveFrameMsg::Curve(setup(false, false, "missing")));
+        drain();
+        assert_eq!(frame.model().temperature_key().as_deref(), Some("edge"));
+        assert!(
+            frame
+                .model()
+                .adjustments
+                .values()
+                .all(|row| row.get_changed_value().is_none())
+        );
+    }
 }

@@ -41,9 +41,12 @@ pub enum AdjustmentControlMsg {
     SetValueRatio(f64),
     Reset,
     SetVisible(bool),
+    SetSensitive(bool),
     AddSizeGroup {
         label_group: gtk::SizeGroup,
-        input_group: gtk::SizeGroup,
+        input_group: Option<gtk::SizeGroup>,
+    },
+    AddBoundsSizeGroup {
         lower_label_group: gtk::SizeGroup,
         upper_label_group: gtk::SizeGroup,
     },
@@ -83,6 +86,7 @@ impl Component for AdjustmentControl {
                     add_css_class: css::CAPTION,
                     add_css_class: css::DIM_LABEL,
                 },
+                #[name = "scale"]
                 gtk::Scale {
                     set_adjustment: &*model.value,
                     set_orientation: gtk::Orientation::Horizontal,
@@ -159,6 +163,10 @@ impl Component for AdjustmentControl {
                 self.value.unblock_signal(&widgets.value_change_signal);
             }
             AdjustmentControlMsg::Reset => self.value.reset(),
+            AdjustmentControlMsg::SetSensitive(sensitive) => {
+                widgets.spinbutton.set_sensitive(sensitive);
+                widgets.scale.set_sensitive(sensitive);
+            }
             AdjustmentControlMsg::SetVisible(visible) => {
                 if root.get_visible() != visible {
                     for (group, widget) in &self.size_group_widgets {
@@ -174,12 +182,27 @@ impl Component for AdjustmentControl {
             AdjustmentControlMsg::AddSizeGroup {
                 label_group,
                 input_group,
+            } => {
+                for (group, widget) in [
+                    (
+                        Some(label_group),
+                        self.title.clone().upcast::<gtk::Widget>(),
+                    ),
+                    (input_group, widgets.spinbutton.clone().upcast()),
+                ] {
+                    if let Some(group) = group {
+                        if root.get_visible() {
+                            group.add_widget(&widget);
+                        }
+                        self.size_group_widgets.push((group, widget));
+                    }
+                }
+            }
+            AdjustmentControlMsg::AddBoundsSizeGroup {
                 lower_label_group,
                 upper_label_group,
             } => {
                 let groups = [
-                    (label_group, self.title.clone().upcast::<gtk::Widget>()),
-                    (input_group, widgets.spinbutton.clone().upcast()),
                     (lower_label_group, widgets.lower_label.clone().upcast()),
                     (upper_label_group, widgets.upper_label.clone().upcast()),
                 ];
@@ -195,7 +218,9 @@ impl Component for AdjustmentControl {
 
     fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
         for (group, widget) in self.size_group_widgets.drain(..) {
-            group.remove_widget(&widget);
+            if group.widgets().contains(&widget) {
+                group.remove_widget(&widget);
+            }
         }
     }
 }

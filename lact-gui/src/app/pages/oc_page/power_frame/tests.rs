@@ -1,0 +1,241 @@
+use super::*;
+use crate::app::test_utils::{assert_silent, find_widget, receive, wait_for};
+use amdgpu_sysfs::gpu_handle::power_profile_mode::{PowerProfile, PowerProfileComponent};
+use std::collections::BTreeMap;
+
+#[test]
+#[ignore = "requires a GTK display; run explicitly with --ignored"]
+fn power_factory_preserves_modes_heuristics_and_pending_cap() {
+    adw::init().unwrap();
+    let context = gtk::glib::MainContext::default();
+    let _guard = context.acquire().unwrap();
+    let drain = || {
+        while context.pending() {
+            context.iteration(false);
+        }
+    };
+    let (output, receiver) = relm4::channel();
+    let frame = PowerFrame::builder().launch(()).forward(&output, |msg| msg);
+    let power = PowerStats {
+        cap_current: Some(150.0),
+        cap_default: Some(125.0),
+        cap_min: Some(50.0),
+        cap_max: Some(200.0),
+        ..Default::default()
+    };
+    frame.emit(PowerFrameMsg::PowerStats(power.clone()));
+    frame.emit(PowerFrameMsg::PerformanceLevel(Some(
+        PerformanceLevel::Auto,
+    )));
+    frame.emit(PowerFrameMsg::PowerProfileModes(Some(
+        PowerProfileModesTable {
+            modes: BTreeMap::from([
+                (
+                    1,
+                    PowerProfile {
+                        name: "BOOTUP_DEFAULT".into(),
+                        components: vec![PowerProfileComponent {
+                            clock_type: None,
+                            values: vec![Some(10)],
+                        }],
+                    },
+                ),
+                (
+                    7,
+                    PowerProfile {
+                        name: "CUSTOM".into(),
+                        components: vec![PowerProfileComponent {
+                            clock_type: None,
+                            values: vec![Some(20)],
+                        }],
+                    },
+                ),
+            ]),
+            value_names: vec!["Threshold".into()],
+            active: 7,
+        },
+    )));
+    drain();
+    // Consume the load notification before checking any edit notification.
+    assert!(matches!(
+        receive(&context, &receiver),
+        OcPageMsg::PerformanceLevelChanged
+    ));
+    assert_silent(&context, &receiver);
+    assert_eq!(frame.model().rows.len(), 3);
+    assert!(
+        frame
+            .model()
+            .rows
+            .values()
+            .all(|row| row.get_changed_value().is_none())
+    );
+    let profile = dropdown(&frame, PowerSetting::PowerProfile);
+    let performance = dropdown(&frame, PowerSetting::PerformanceLevel);
+    assert_eq!(profile.selected(), 1);
+    assert!(!profile.is_sensitive());
+    assert_eq!(frame.model().power_profile_mode(), None);
+    assert!(!frame.model().heuristics_notebook.is_sensitive());
+
+    let cap = frame.model().rows[&PowerSetting::PowerCap].widget().clone();
+    let spin = find_widget::<gtk::SpinButton>(cap.upcast_ref()).unwrap();
+    // The p-state dialog requests this edit without rebuilding the selector.
+    frame.emit(PowerFrameMsg::SetPerformanceLevel(PerformanceLevel::Manual));
+    assert!(matches!(
+        receive(&context, &receiver),
+        OcPageMsg::PerformanceLevelChanged
+    ));
+    wait_for(&context, || profile.is_sensitive());
+    assert_eq!(
+        dropdown(&frame, PowerSetting::PerformanceLevel),
+        performance
+    );
+    assert_eq!(
+        frame.model().rows[&PowerSetting::PerformanceLevel].get_changed_value(),
+        Some(SettingRowValue::Selected(Some(3)))
+    );
+    assert_eq!(
+        frame.model().performance_level(),
+        Some(PerformanceLevel::Manual)
+    );
+    assert_eq!(frame.model().power_profile_mode(), Some(7));
+    assert!(profile.is_sensitive());
+    assert!(frame.model().heuristics_notebook.is_sensitive());
+    assert_eq!(
+        frame.model().power_profile_mode_custom_heuristics(),
+        vec![vec![Some(20)]]
+    );
+    spin.set_value(175.0);
+    drain();
+    assert_eq!(frame.model().get_user_cap(), Some(175.0));
+
+    profile.set_selected(0);
+    wait_for(&context, || {
+        !frame.model().heuristics_notebook.is_sensitive()
+    });
+    assert_eq!(frame.model().power_profile_mode(), Some(1));
+    assert!(!frame.model().heuristics_notebook.is_sensitive());
+    assert!(
+        frame
+            .model()
+            .power_profile_mode_custom_heuristics()
+            .is_empty()
+    );
+    profile.set_selected(1);
+    wait_for(&context, || {
+        frame.model().heuristics_notebook.is_sensitive()
+    });
+    assert_eq!(frame.model().power_profile_mode(), Some(7));
+    assert_eq!(
+        frame.model().power_profile_mode_custom_heuristics(),
+        vec![vec![Some(20)]]
+    );
+
+    frame.emit(PowerFrameMsg::PerformanceLevel(Some(
+        PerformanceLevel::High,
+    )));
+    drain();
+    assert_eq!(frame.model().get_user_cap(), Some(175.0));
+    assert!(!profile.is_sensitive());
+    assert_eq!(frame.model().power_profile_mode(), None);
+    assert_order(
+        &frame,
+        &[
+            PowerSetting::PowerCap,
+            PowerSetting::PerformanceLevel,
+            PowerSetting::PowerProfile,
+        ],
+    );
+    frame.emit(PowerFrameMsg::Reset);
+    drain();
+    assert_eq!(frame.model().get_user_cap(), Some(125.0));
+    assert_eq!(
+        frame.model().performance_level(),
+        Some(PerformanceLevel::High)
+    );
+
+    // A subsequent device load replaces the AMD selectors with the supported NVIDIA modes.
+    frame.emit(PowerFrameMsg::PowerStats(power));
+    frame.emit(PowerFrameMsg::PerformanceLevel(None));
+    frame.emit(PowerFrameMsg::PowerProfileModes(None));
+    frame.emit(PowerFrameMsg::PowerMizerInfo {
+        active: Some(PowerMizerMode::Adaptive),
+        supported: Some(vec![
+            PowerMizerMode::PreferMaximumPerformance,
+            PowerMizerMode::Adaptive,
+        ]),
+    });
+    drain();
+    assert_eq!(frame.model().rows.len(), 2);
+    assert_eq!(frame.model().get_user_cap(), None);
+    assert_eq!(frame.model().performance_level(), None);
+    assert!(frame.model().heuristics_components.is_empty());
+    assert_eq!(
+        frame.model().active_power_mizer_mode(),
+        Some(PowerMizerMode::Adaptive)
+    );
+    let mizer = dropdown(&frame, PowerSetting::PowerMizer);
+    assert_eq!(mizer.selected(), 1);
+    mizer.set_selected(0);
+    drain();
+    assert_eq!(
+        frame.model().active_power_mizer_mode(),
+        Some(PowerMizerMode::PreferMaximumPerformance)
+    );
+    assert_order(&frame, &[PowerSetting::PowerCap, PowerSetting::PowerMizer]);
+
+    frame.emit(PowerFrameMsg::PowerStats(PowerStats::default()));
+    frame.emit(PowerFrameMsg::PowerMizerInfo {
+        active: None,
+        supported: None,
+    });
+    drain();
+    assert!(frame.model().rows.is_empty());
+    assert!(!frame.widget().get_visible());
+
+    // Preserve reported active modes even if they are absent from the usual choices.
+    frame.emit(PowerFrameMsg::PerformanceLevel(Some(
+        PerformanceLevel::PerfDeterminism,
+    )));
+    frame.emit(PowerFrameMsg::PowerMizerInfo {
+        active: Some(PowerMizerMode::Adaptive),
+        supported: None,
+    });
+    drain();
+    assert_eq!(
+        frame.model().performance_level(),
+        Some(PerformanceLevel::PerfDeterminism)
+    );
+    assert_eq!(
+        frame.model().active_power_mizer_mode(),
+        Some(PowerMizerMode::Adaptive)
+    );
+    assert!(
+        frame
+            .model()
+            .rows
+            .values()
+            .all(|row| row.get_changed_value().is_none())
+    );
+}
+
+fn dropdown(frame: &relm4::Controller<PowerFrame>, setting: PowerSetting) -> gtk::DropDown {
+    find_widget(frame.model().rows[&setting].widget().upcast_ref()).unwrap()
+}
+
+fn assert_order(frame: &relm4::Controller<PowerFrame>, settings: &[PowerSetting]) {
+    for (index, setting) in settings.iter().enumerate() {
+        assert_eq!(
+            frame
+                .model()
+                .rows
+                .widget()
+                .row_at_index(index as i32)
+                .unwrap()
+                .child()
+                .as_ref(),
+            Some(frame.model().rows[setting].widget().upcast_ref()),
+            "expected {setting:?} at position {index}",
+        );
+    }
+}

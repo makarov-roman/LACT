@@ -19,6 +19,7 @@ pub enum BooleanControlMsg {
     Changed,
     Reset,
     SetVisible(bool),
+    SetSensitive(bool),
     AddSizeGroup {
         label_group: gtk::SizeGroup,
         input_group: Option<gtk::SizeGroup>,
@@ -76,6 +77,7 @@ impl Component for BooleanControl {
                 let _ = sender.output(());
             }
             BooleanControlMsg::Reset => self.value.reset(),
+            BooleanControlMsg::SetSensitive(sensitive) => widgets.switch.set_sensitive(sensitive),
             BooleanControlMsg::SetVisible(visible) => {
                 if root.get_visible() != visible {
                     for (group, widget) in &self.size_group_widgets {
@@ -112,7 +114,9 @@ impl Component for BooleanControl {
 
     fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
         for (group, widget) in self.size_group_widgets.drain(..) {
-            group.remove_widget(&widget);
+            if group.widgets().contains(&widget) {
+                group.remove_widget(&widget);
+            }
         }
     }
 }

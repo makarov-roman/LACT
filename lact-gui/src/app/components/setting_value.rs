@@ -15,6 +15,8 @@ pub trait SettingValue {
     /// Sets the stored default as an edit, if a default is available.
     fn reset(&self);
 
+    fn has_default(&self) -> bool;
+
     fn is_changed(&self) -> &BoolBinding;
     fn is_default(&self) -> &BoolBinding;
 

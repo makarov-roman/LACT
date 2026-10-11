@@ -370,11 +370,16 @@ impl relm4::Component for ClocksFrame {
                 let lower_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
                 let upper_label_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal);
 
-                for row in self.adjustments.values() {
-                    if let SettingControl::Adjustment(control) = &row.control {
-                        control.emit(AdjustmentControlMsg::AddSizeGroup {
+                for (key, row) in self.adjustments.iter() {
+                    self.adjustments.send(
+                        key,
+                        SettingRowMsg::AddSizeGroup {
                             label_group: label_size_group.clone(),
-                            input_group: input_size_group.clone(),
+                            input_group: Some(input_size_group.clone()),
+                        },
+                    );
+                    if let SettingControl::Adjustment(control) = &row.control {
+                        control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
                             lower_label_group: lower_label_group.clone(),
                             upper_label_group: upper_label_group.clone(),
                         });

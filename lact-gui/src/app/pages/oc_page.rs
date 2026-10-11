@@ -1,12 +1,10 @@
 mod card_layout;
 mod clocks_frame;
 mod igpu_frame;
-mod performance_frame;
 mod power_frame;
 mod power_states;
 mod vf_curve;
 
-use crate::APP_BROKER;
 use crate::app::components::gpu_stats_section::{
     GpuStat, GpuStatsSection, GpuStatsSectionConfig, GpuStatsSectionMsg,
 };
@@ -24,7 +22,6 @@ use indexmap::IndexMap;
 use lact_schema::config;
 use lact_schema::{ClocksTable, DeviceInfo, PowerStates};
 use nvml_wrapper::enums::device::PowerMizerMode;
-use performance_frame::PerformanceFrameMsg;
 use power_frame::{PowerFrame, PowerFrameMsg};
 use power_states::power_states_dialog::{PowerStatesDialog, PowerStatesDialogMsg};
 use relm4::binding::BoolBinding;
@@ -201,15 +198,12 @@ impl relm4::Component for OcPage {
                     if initial {
                         self.power_frame
                             .emit(PowerFrameMsg::PowerStats(stats.power.clone()));
-                        self.power_frame.emit(PowerFrameMsg::Performance(
-                            PerformanceFrameMsg::PerformanceLevel(stats.performance_level),
-                        ));
-                        self.power_frame.emit(PowerFrameMsg::Performance(
-                            PerformanceFrameMsg::PowerMizerInfo {
-                                active: stats.active_power_mizer_mode,
-                                supported: stats.supported_power_mizer_modes.clone(),
-                            },
-                        ));
+                        self.power_frame
+                            .emit(PowerFrameMsg::PerformanceLevel(stats.performance_level));
+                        self.power_frame.emit(PowerFrameMsg::PowerMizerInfo {
+                            active: stats.active_power_mizer_mode,
+                            supported: stats.supported_power_mizer_modes.clone(),
+                        });
                     }
                 }
                 PageUpdate::Info(info) => {
@@ -249,9 +243,8 @@ impl relm4::Component for OcPage {
                     .emit(VfCurveEditorMsg::Clocks(table.clone()));
             }
             OcPageMsg::ProfileModesTable(modes_table) => {
-                self.power_frame.emit(PowerFrameMsg::Performance(
-                    PerformanceFrameMsg::PowerProfileModes(modes_table),
-                ));
+                self.power_frame
+                    .emit(PowerFrameMsg::PowerProfileModes(modes_table));
             }
             OcPageMsg::PowerStates {
                 pstates,
@@ -288,10 +281,8 @@ impl relm4::Component for OcPage {
                     ));
             }
             OcPageMsg::SetPerformanceLevel(level) => {
-                self.power_frame.emit(PowerFrameMsg::Performance(
-                    PerformanceFrameMsg::PerformanceLevel(Some(level)),
-                ));
-                APP_BROKER.send(AppMsg::SettingsChanged);
+                self.power_frame
+                    .emit(PowerFrameMsg::SetPerformanceLevel(level));
             }
             OcPageMsg::EnablePstateConfig => {
                 self.power_states_dialog

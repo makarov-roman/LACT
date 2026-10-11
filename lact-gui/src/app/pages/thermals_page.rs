@@ -11,8 +11,8 @@ use crate::{
             adjustment_card::AdjustmentCard,
             page_section::PageSection,
             setting_row::{
-                AdjustmentControlMsg, AdjustmentInit, BooleanControlMsg, BooleanInit,
-                SettingControl, SettingRow, SettingRowInit, SettingRowMsg, SettingRowValue,
+                AdjustmentControlMsg, AdjustmentInit, BooleanInit, SettingControl, SettingRow,
+                SettingRowInit, SettingRowMsg, SettingRowValue,
             },
         },
         msg::AppMsg,
@@ -53,7 +53,6 @@ pub struct ThermalsPage {
     has_auto_threshold: bool,
     label_size_group: gtk::SizeGroup,
     input_size_group: gtk::SizeGroup,
-    target_temperature_default: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -235,7 +234,6 @@ impl relm4::Component for ThermalsPage {
             fan_curve_frame,
             label_size_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
             input_size_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
-            target_temperature_default: None,
             custom_control_supported: false,
             has_fan_speed: false,
             has_pmfw: false,
@@ -361,9 +359,7 @@ impl relm4::Component for ThermalsPage {
                                 if let SettingControl::Adjustment(control) =
                                     &self.pmfw_rows[&setting].control
                                 {
-                                    control.emit(AdjustmentControlMsg::AddSizeGroup {
-                                        label_group: self.label_size_group.clone(),
-                                        input_group: self.input_size_group.clone(),
+                                    control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
                                         lower_label_group: lower_label_group.clone(),
                                         upper_label_group: upper_label_group.clone(),
                                     });
@@ -384,9 +380,7 @@ impl relm4::Component for ThermalsPage {
                             if let SettingControl::Adjustment(control) =
                                 &self.nvidia_target_temperature[&()].control
                             {
-                                control.emit(AdjustmentControlMsg::AddSizeGroup {
-                                    label_group: self.label_size_group.clone(),
-                                    input_group: self.input_size_group.clone(),
+                                control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
                                     lower_label_group: lower_label_group.clone(),
                                     upper_label_group: upper_label_group.clone(),
                                 });
@@ -403,14 +397,6 @@ impl relm4::Component for ThermalsPage {
                                     },
                                 ),
                             );
-                            if let SettingControl::Boolean(control) =
-                                &self.pmfw_rows[&ThermalSetting::ZeroRpmEnabled].control
-                            {
-                                control.emit(BooleanControlMsg::AddSizeGroup {
-                                    label_group: self.label_size_group.clone(),
-                                    input_group: None,
-                                });
-                            }
                         }
                         if let Some(init) = fan_info_init(info.zero_rpm_temperature) {
                             self.pmfw_rows.insert(
@@ -424,16 +410,31 @@ impl relm4::Component for ThermalsPage {
                             if let SettingControl::Adjustment(control) =
                                 &self.pmfw_rows[&ThermalSetting::ZeroRpmTemperature].control
                             {
-                                control.emit(AdjustmentControlMsg::AddSizeGroup {
-                                    label_group: self.label_size_group.clone(),
-                                    input_group: self.input_size_group.clone(),
+                                control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
                                     lower_label_group: lower_label_group.clone(),
                                     upper_label_group: upper_label_group.clone(),
                                 });
                             }
                         }
-                        self.target_temperature_default =
-                            stats.nvidia_thermal_info.target_temp_default;
+                        for key in self.pmfw_rows.keys() {
+                            self.pmfw_rows.send(
+                                key,
+                                SettingRowMsg::AddSizeGroup {
+                                    label_group: self.label_size_group.clone(),
+                                    input_group: (*key != ThermalSetting::ZeroRpmEnabled)
+                                        .then(|| self.input_size_group.clone()),
+                                },
+                            );
+                        }
+                        if !self.nvidia_target_temperature.is_empty() {
+                            self.nvidia_target_temperature.send(
+                                &(),
+                                SettingRowMsg::AddSizeGroup {
+                                    label_group: self.label_size_group.clone(),
+                                    input_group: Some(self.input_size_group.clone()),
+                                },
+                            );
+                        }
                         self.update_pmfw_rows_visibility();
                     }
                 }
@@ -444,15 +445,15 @@ impl relm4::Component for ThermalsPage {
                 APP_BROKER.send(AppMsg::SettingsChanged);
             }
             ThermalsPageMsg::RestNvidiaOptions => {
-                if self.target_temperature_default.is_some() {
-                    if !self.nvidia_target_temperature.is_empty() {
+                if let Some(row) = self.nvidia_target_temperature.get(&()) {
+                    if row.has_default() {
                         self.nvidia_target_temperature
                             .send(&(), SettingRowMsg::Reset);
+                    } else {
+                        APP_BROKER.send(AppMsg::Error(Arc::new(anyhow!(
+                            "No default target temperature present"
+                        ))));
                     }
-                } else {
-                    APP_BROKER.send(AppMsg::Error(Arc::new(anyhow!(
-                        "No default target temperature present"
-                    ))));
                 }
             }
         }
@@ -583,7 +584,8 @@ fn fan_info_init(info: Option<FanInfo>) -> Option<AdjustmentInit> {
 #[cfg(all(test, feature = "gtk-tests"))]
 mod tests {
     use super::*;
-    use lact_schema::{DeviceStats, FanStats, PmfwInfo};
+    use crate::app::test_utils::find_widget;
+    use lact_schema::{DeviceStats, FanStats, NvidiaThermalInfo, PmfwInfo};
 
     #[test]
     #[ignore = "requires a GTK display; run explicitly with --ignored"]
@@ -704,19 +706,28 @@ mod tests {
         page.model().apply_config(&mut config);
         assert_eq!(config.pmfw_options.zero_rpm, None);
         assert_eq!(config.pmfw_options.zero_rpm_threshold, None);
-    }
 
-    fn find_widget<W: IsA<gtk::Widget>>(widget: &gtk::Widget) -> Option<W> {
-        if let Ok(widget) = widget.clone().downcast::<W>() {
-            return Some(widget);
+        // The reset action uses the current row's default, including after a reload loses it.
+        for default in [Some(80), None] {
+            page.emit(ThermalsPageMsg::Update {
+                update: PageUpdate::Stats(Arc::new(DeviceStats {
+                    nvidia_thermal_info: NvidiaThermalInfo {
+                        target_temp: Some(FanInfo {
+                            current: 85,
+                            allowed_range: Some((60, 95)),
+                        }),
+                        target_temp_default: default,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })),
+                initial: true,
+            });
+            page.emit(ThermalsPageMsg::RestNvidiaOptions);
+            drain();
+            let mut config = GpuConfig::default();
+            page.model().apply_config(&mut config);
+            assert_eq!(config.nvidia_thermal_options.target_temperature, default);
         }
-        let mut child = widget.first_child();
-        while let Some(widget) = child {
-            if let Some(widget) = find_widget(&widget) {
-                return Some(widget);
-            }
-            child = widget.next_sibling();
-        }
-        None
     }
 }

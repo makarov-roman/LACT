@@ -1,20 +1,26 @@
 use super::*;
-use crate::app::components::{adjustment_value::AdjustmentValue, setting_value::SettingValue};
-use futures::FutureExt;
+use crate::app::{
+    components::{adjustment_value::AdjustmentValue, setting_value::SettingValue},
+    test_utils::{assert_silent, find_widget, receive},
+};
 use relm4::{binding::Binding, factory::FactoryHashMap};
 use std::{cell::Cell, rc::Rc};
 
 #[test]
 #[ignore = "requires a GTK display; run explicitly with --ignored"]
-fn numeric_and_boolean_rows_share_state_and_factory_behavior() {
+fn setting_rows_share_state_and_factory_behavior() {
     gtk::init().unwrap();
+    let fatal_mask = gtk::glib::log_set_fatal_mask(
+        Some("Gtk"),
+        gtk::glib::LogLevels::LEVEL_ERROR | gtk::glib::LogLevels::LEVEL_CRITICAL,
+    );
     let context = gtk::glib::MainContext::default();
     let _guard = context.acquire().unwrap();
     preserves_numeric_edit_and_unit_change_behavior(&context);
     mixed_factory_updates_widgets_and_routes_resets(&context);
-    boolean_factory_supports_typed_values(&context);
-    controls_notify_edits_but_not_initialization(&context);
     row_forwards_edits_and_shuts_down_replaced_controls(&context);
+    select_rows_preserve_selection_and_edit_lifecycle(&context);
+    gtk::glib::log_set_fatal_mask(Some("Gtk"), fatal_mask);
 }
 
 fn drain(context: &gtk::glib::MainContext) {
@@ -24,9 +30,10 @@ fn drain(context: &gtk::glib::MainContext) {
 }
 
 fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainContext) {
+    let (output, receiver) = relm4::channel();
     let mut rows = FactoryHashMap::<(), SettingRow<()>>::builder()
         .launch_default()
-        .detach();
+        .forward(&output, |()| ());
     rows.insert(
         (),
         SettingRowInit::new(
@@ -42,6 +49,7 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
     drain(context);
     assert_eq!(rows[&()].get_value(), SettingRowValue::Numeric(200.0));
     assert_eq!(rows[&()].get_changed_value(), None);
+    assert_silent(context, &receiver);
     let SettingControl::Adjustment(control) = &rows[&()].control else {
         panic!("expected a numeric row");
     };
@@ -51,13 +59,23 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
         let notified = notified.clone();
         move |binding| notified.set(binding.get())
     });
+    let spin = find_widget::<gtk::SpinButton>(rows.widget().upcast_ref()).unwrap();
 
-    adjustment.set_value(200.0);
+    // Changing display units must not enable Apply or change the raw value.
+    control.emit(AdjustmentControlMsg::SetValueRatio(2.0));
+    assert_silent(context, &receiver);
+    assert_eq!(spin.value(), 400.0);
+    assert_eq!(rows[&()].get_value(), SettingRowValue::Numeric(200.0));
     assert_eq!(rows[&()].get_changed_value(), None);
-    adjustment.set_value(100.0);
+
+    // Uncommitted text notifies Apply, but only committing it changes the raw value.
+    spin.set_text("350");
+    receive(context, &receiver);
+    assert_eq!(rows[&()].get_changed_value(), None);
+    spin.update();
     assert_eq!(
         rows[&()].get_changed_value(),
-        Some(SettingRowValue::Numeric(100.0))
+        Some(SettingRowValue::Numeric(175.0))
     );
     assert!(notified.get());
     adjustment.set_value(200.0);
@@ -65,27 +83,6 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
         rows[&()].get_changed_value(),
         Some(SettingRowValue::Numeric(200.0))
     );
-    adjustment.set_value(150.0);
-
-    // Uncommitted text must not overwrite the numeric value.
-    let spin = find_widget::<gtk::SpinButton>(rows.widget().upcast_ref()).unwrap();
-    spin.set_text("175");
-    assert_eq!(
-        rows[&()].get_changed_value(),
-        Some(SettingRowValue::Numeric(150.0))
-    );
-    spin.update();
-    assert_eq!(
-        rows[&()].get_changed_value(),
-        Some(SettingRowValue::Numeric(175.0))
-    );
-
-    control.emit(AdjustmentControlMsg::SetValueRatio(2.0));
-    drain(context);
-    assert_eq!(spin.value(), 350.0);
-    assert_eq!(rows[&()].get_value(), SettingRowValue::Numeric(175.0));
-    assert_eq!(rows[&()].get_changed_value(), None);
-    assert!(!notified.get());
 
     rows.send(&(), SettingRowMsg::Reset);
     drain(context);
@@ -97,7 +94,6 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
         Some(SettingRowValue::Numeric(25.0))
     );
     assert!(adjustment.is_default().get());
-    assert!(notified.get());
 
     adjustment.set_value(50.0);
     assert_eq!(
@@ -111,10 +107,6 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
     assert_eq!(spin.value(), 50.0);
     assert!(!notified.get());
 
-    rows.send(&(), SettingRowMsg::Reset);
-    drain(context);
-    assert_eq!(rows[&()].get_changed_value(), None);
-
     spin.set_value(1000.0);
     assert_eq!(adjustment.get_value(), 200.0);
     assert_eq!(adjustment.get_changed_value(), Some(200.0));
@@ -124,7 +116,6 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
     zero_default.reset();
     assert_eq!(zero_default.get_changed_value(), Some(0.0));
     assert!(zero_default.is_default().get());
-
     let unknown_default = AdjustmentValue::new(50.0, None, 0.0, 200.0, 1.0, 10.0);
     unknown_default.reset();
     assert_eq!(unknown_default.get_value(), 50.0);
@@ -133,9 +124,10 @@ fn preserves_numeric_edit_and_unit_change_behavior(context: &gtk::glib::MainCont
 }
 
 fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainContext) {
+    let (output, receiver) = relm4::channel();
     let mut rows = FactoryHashMap::<u8, SettingRow<u8>>::builder()
         .launch_default()
-        .detach();
+        .forward(&output, |()| ());
     rows.insert(
         0,
         SettingRowInit::new(
@@ -165,66 +157,57 @@ fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainCont
     assert!(numeric_root.has_css_class("adjustment-row"));
     let switch = find_widget::<gtk::Switch>(bool_root.upcast_ref()).unwrap();
     let spin = find_widget::<gtk::SpinButton>(numeric_root.upcast_ref()).unwrap();
+    let scale = find_widget::<gtk::Scale>(numeric_root.upcast_ref()).unwrap();
     assert!(switch.is_active());
     assert_eq!(rows[&0].get_value().as_boolean(), Some(true));
-    assert_eq!(rows[&0].get_value().as_numeric(), None);
     assert_eq!(rows[&1].get_value().as_numeric(), Some(50.0));
-    assert_eq!(rows[&1].get_value().as_boolean(), None);
-    assert_eq!(rows[&0].get_changed_value(), None);
-    assert_eq!(rows[&1].get_changed_value(), None);
+    assert_silent(context, &receiver);
 
-    // The card requests resets; rows only display their controls.
+    // Reset only the addressed row, and emit nothing on a repeated reset.
     rows.send(&0, SettingRowMsg::Reset);
-    drain(context);
+    receive(context, &receiver);
     assert!(!switch.is_active());
     assert_eq!(
         rows[&0].get_changed_value(),
         Some(SettingRowValue::Boolean(false))
     );
     assert_eq!(rows[&1].get_changed_value(), None);
-
-    switch.set_active(true);
-    drain(context);
-    assert_eq!(
-        rows[&0].get_changed_value(),
-        Some(SettingRowValue::Boolean(true))
-    );
-
-    // Display-unit changes must not enable Apply.
-    let SettingControl::Adjustment(control) = &rows[&1].control else {
-        panic!("expected an adjustment control");
+    rows.send(&0, SettingRowMsg::Reset);
+    assert_silent(context, &receiver);
+    rows.send(&0, SettingRowMsg::SetValue(SettingRowValue::Boolean(true)));
+    receive(context, &receiver);
+    assert!(switch.is_active());
+    let SettingControl::Boolean(control) = &rows[&0].control else {
+        unreachable!()
     };
-    control.emit(AdjustmentControlMsg::SetValueRatio(2.0));
-    drain(context);
-    assert_eq!(rows[&1].get_changed_value(), None);
-    rows.send(&1, SettingRowMsg::Reset);
-    drain(context);
-    assert_eq!(
-        rows[&1].get_changed_value(),
-        Some(SettingRowValue::Numeric(25.0))
-    );
-    assert_eq!(spin.value(), 50.0);
+    control.model().value.set_initial_value(false);
+    assert!(!switch.is_active());
+    assert_eq!(rows[&0].get_changed_value(), None);
 
     // Both row kinds share title/input sizing; only numeric rows have bound labels.
     let groups: [gtk::SizeGroup; 4] =
         std::array::from_fn(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal));
     for key in [0, 1] {
-        match &rows[&key].control {
-            SettingControl::Adjustment(control) => {
-                control.emit(AdjustmentControlMsg::AddSizeGroup {
-                    label_group: groups[0].clone(),
-                    input_group: groups[1].clone(),
-                    lower_label_group: groups[2].clone(),
-                    upper_label_group: groups[3].clone(),
-                })
-            }
-            SettingControl::Boolean(control) => control.emit(BooleanControlMsg::AddSizeGroup {
+        rows.send(
+            &key,
+            SettingRowMsg::AddSizeGroup {
                 label_group: groups[0].clone(),
                 input_group: Some(groups[1].clone()),
-            }),
-        }
+            },
+        );
+        rows.send(&key, SettingRowMsg::SetSensitive(false));
     }
+    let SettingControl::Adjustment(control) = &rows[&1].control else {
+        unreachable!()
+    };
+    control.emit(AdjustmentControlMsg::AddBoundsSizeGroup {
+        lower_label_group: groups[2].clone(),
+        upper_label_group: groups[3].clone(),
+    });
     drain(context);
+    assert!(!switch.is_sensitive());
+    assert!(!spin.is_sensitive());
+    assert!(!scale.is_sensitive());
     assert_eq!(groups[0].widgets().len(), 2);
     assert_eq!(groups[1].widgets().len(), 2);
     assert_eq!(groups[2].widgets().len(), 1);
@@ -239,96 +222,13 @@ fn mixed_factory_updates_widgets_and_routes_resets(context: &gtk::glib::MainCont
     assert_eq!(groups[0].widgets().len(), 2);
     assert_eq!(groups[2].widgets().len(), 1);
 
+    // Reloading a card may destroy rows after visibility has removed their widgets.
+    rows.send(&0, SettingRowMsg::SetVisible(false));
+    rows.send(&1, SettingRowMsg::SetVisible(false));
+    drain(context);
     rows.clear();
     drain(context);
     assert!(groups.iter().all(|group| group.widgets().is_empty()));
-    rows.insert(
-        0,
-        SettingRowInit::new(
-            String::new(),
-            BooleanInit {
-                value: false,
-                ..Default::default()
-            },
-        ),
-    );
-    drain(context);
-    assert_eq!(rows[&0].get_changed_value(), None);
-}
-
-fn boolean_factory_supports_typed_values(context: &gtk::glib::MainContext) {
-    let mut rows = FactoryHashMap::<(), SettingRow<()>>::builder()
-        .launch_default()
-        .detach();
-    rows.insert(
-        (),
-        SettingRowInit::new(
-            String::new(),
-            BooleanInit {
-                value: false,
-                default_value: Some(true),
-            },
-        ),
-    );
-    drain(context);
-    assert_eq!(rows[&()].get_value(), SettingRowValue::Boolean(false));
-    let switch = find_widget::<gtk::Switch>(rows.widget().upcast_ref()).unwrap();
-    rows.send(&(), SettingRowMsg::Reset);
-    drain(context);
-    assert!(switch.is_active());
-    assert_eq!(
-        rows[&()].get_changed_value(),
-        Some(SettingRowValue::Boolean(true))
-    );
-    let SettingControl::Boolean(control) = &rows[&()].control else {
-        panic!("expected a boolean row");
-    };
-    control.model().value.set_initial_value(false);
-    assert!(!switch.is_active());
-    assert_eq!(rows[&()].get_changed_value(), None);
-}
-
-fn controls_notify_edits_but_not_initialization(context: &gtk::glib::MainContext) {
-    let (output, receiver) = relm4::channel();
-    let boolean = BooleanControl::builder()
-        .launch((
-            BooleanInit {
-                value: true,
-                default_value: Some(false),
-            },
-            gtk::Box::default(),
-        ))
-        .forward(&output, |()| ());
-    let numeric = AdjustmentControl::builder()
-        .launch((
-            AdjustmentInit {
-                value: 50.0,
-                upper: 100.0,
-                ..Default::default()
-            },
-            gtk::Box::default(),
-        ))
-        .forward(&output, |()| ());
-    drain(context);
-    assert_eq!(receiver.recv().now_or_never(), None);
-    boolean.emit(BooleanControlMsg::Reset);
-    drain(context);
-    assert_eq!(receiver.recv().now_or_never(), Some(Some(())));
-    boolean.emit(BooleanControlMsg::Reset);
-    drain(context);
-    assert_eq!(receiver.recv().now_or_never(), None);
-    let switch = find_widget::<gtk::Switch>(boolean.widget().upcast_ref()).unwrap();
-    switch.set_active(true);
-    drain(context);
-    assert_eq!(receiver.recv().now_or_never(), Some(Some(())));
-    assert_eq!(receiver.recv().now_or_never(), None);
-    numeric.emit(AdjustmentControlMsg::SetValueRatio(2.0));
-    drain(context);
-    assert_eq!(receiver.recv().now_or_never(), None);
-    let spin = find_widget::<gtk::SpinButton>(numeric.widget().upcast_ref()).unwrap();
-    spin.set_text("75");
-    drain(context);
-    assert_eq!(receiver.recv().now_or_never(), Some(Some(())));
 }
 
 fn row_forwards_edits_and_shuts_down_replaced_controls(context: &gtk::glib::MainContext) {
@@ -341,22 +241,10 @@ fn row_forwards_edits_and_shuts_down_replaced_controls(context: &gtk::glib::Main
         SettingRowInit::new("Enabled".into(), BooleanInit::default()),
     );
     drain(context);
-    assert_eq!(receiver.recv().now_or_never(), None);
-
+    assert_silent(context, &receiver);
     let switch = find_widget::<gtk::Switch>(rows.widget().upcast_ref()).unwrap();
     switch.set_active(true);
-    drain(context);
-    assert_eq!(
-        context
-            .block_on(gtk::glib::future_with_timeout(
-                std::time::Duration::from_secs(5),
-                receiver.recv(),
-            ))
-            .unwrap(),
-        Some(())
-    );
-    assert_eq!(receiver.recv().now_or_never(), None);
-
+    receive(context, &receiver);
     rows.insert(
         (),
         SettingRowInit::new(
@@ -369,42 +257,122 @@ fn row_forwards_edits_and_shuts_down_replaced_controls(context: &gtk::glib::Main
         ),
     );
     drain(context);
-    assert_eq!(receiver.recv().now_or_never(), None);
 
     // A retained widget from the replaced child must no longer notify the factory.
     switch.set_active(false);
-    assert!(
-        context
-            .block_on(gtk::glib::future_with_timeout(
-                std::time::Duration::from_millis(50),
-                receiver.recv(),
-            ))
-            .is_err()
-    );
+    assert_silent(context, &receiver);
     let spin = find_widget::<gtk::SpinButton>(rows.widget().upcast_ref()).unwrap();
     spin.set_text("75");
-    drain(context);
-    assert_eq!(
-        context
-            .block_on(gtk::glib::future_with_timeout(
-                std::time::Duration::from_secs(5),
-                receiver.recv(),
-            ))
-            .unwrap(),
-        Some(())
-    );
+    receive(context, &receiver);
 }
 
-fn find_widget<W: IsA<gtk::Widget>>(widget: &gtk::Widget) -> Option<W> {
-    if let Ok(widget) = widget.clone().downcast::<W>() {
-        return Some(widget);
-    }
-    let mut child = widget.first_child();
-    while let Some(widget) = child {
-        if let Some(widget) = find_widget(&widget) {
-            return Some(widget);
-        }
-        child = widget.next_sibling();
-    }
-    None
+fn select_rows_preserve_selection_and_edit_lifecycle(context: &gtk::glib::MainContext) {
+    let (output, receiver) = relm4::channel();
+    let mut rows = FactoryHashMap::<(), SettingRow<()>>::builder()
+        .launch_default()
+        .forward(&output, |()| ());
+    rows.insert(
+        (),
+        SettingRowInit::new(
+            "Mode".into(),
+            SelectInit {
+                options: vec![
+                    SelectOption {
+                        label: "Auto".into(),
+                        description: "Automatic clocks".into(),
+                    },
+                    SelectOption {
+                        label: "Manual".into(),
+                        description: "Manual clocks".into(),
+                    },
+                ],
+                selected: Some(1),
+                default_value: Some(0),
+                ..Default::default()
+            },
+        ),
+    );
+    drain(context);
+    let root = rows.widget().row_at_index(0).unwrap();
+    assert!(root.has_css_class("select-row"));
+    let dropdown = find_widget::<gtk::DropDown>(root.upcast_ref()).unwrap();
+    assert_eq!(dropdown.selected(), 1);
+    assert_eq!(rows[&()].get_value().as_selected(), Some(1));
+    assert_eq!(rows[&()].get_changed_value(), None);
+    assert_silent(context, &receiver);
+    let SettingControl::Select(control) = &rows[&()].control else {
+        unreachable!()
+    };
+    let description = control.widgets().description_label.clone();
+    assert_eq!(description.text(), "Manual clocks");
+    let groups: [gtk::SizeGroup; 2] =
+        std::array::from_fn(|_| gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal));
+    rows.send(
+        &(),
+        SettingRowMsg::AddSizeGroup {
+            label_group: groups[0].clone(),
+            input_group: Some(groups[1].clone()),
+        },
+    );
+    rows.send(&(), SettingRowMsg::SetSensitive(false));
+    drain(context);
+    assert!(!dropdown.is_sensitive());
+    assert!(groups.iter().all(|group| group.widgets().len() == 1));
+    rows.send(&(), SettingRowMsg::SetSensitive(true));
+    rows.send(&(), SettingRowMsg::SetVisible(false));
+    drain(context);
+    assert!(!root.get_visible());
+    assert!(groups.iter().all(|group| group.widgets().is_empty()));
+    rows.send(&(), SettingRowMsg::SetVisible(true));
+    rows.send(&(), SettingRowMsg::Reset);
+    receive(context, &receiver);
+    assert!(root.get_visible());
+    assert!(groups.iter().all(|group| group.widgets().len() == 1));
+    assert_eq!(dropdown.selected(), 0);
+    assert_eq!(description.text(), "Automatic clocks");
+    assert_eq!(
+        rows[&()].get_changed_value(),
+        Some(SettingRowValue::Selected(Some(0)))
+    );
+    dropdown.set_selected(1);
+    receive(context, &receiver);
+    assert_eq!(rows[&()].get_value().as_selected(), Some(1));
+    assert_eq!(description.text(), "Manual clocks");
+
+    rows.send(&(), SettingRowMsg::SetVisible(false));
+    drain(context);
+    rows.insert(
+        (),
+        SettingRowInit::new("Unavailable".into(), SelectInit::default()),
+    );
+    drain(context);
+    assert!(groups.iter().all(|group| group.widgets().is_empty()));
+    let empty = find_widget::<gtk::DropDown>(rows.widget().upcast_ref()).unwrap();
+    assert_eq!(empty.selected(), gtk::INVALID_LIST_POSITION);
+    assert_eq!(rows[&()].get_value().as_selected(), None);
+    assert_eq!(rows[&()].get_changed_value(), None);
+    rows.send(&(), SettingRowMsg::Reset);
+    dropdown.set_selected(0);
+    assert_silent(context, &receiver);
+
+    // Match GTK's fallback selection without marking initialization as an edit.
+    rows.insert(
+        (),
+        SettingRowInit::new(
+            "Unknown".into(),
+            SelectInit {
+                options: vec!["Auto".to_owned().into()],
+                selected: Some(10),
+                default_value: Some(10),
+                ..Default::default()
+            },
+        ),
+    );
+    drain(context);
+    let dropdown = find_widget::<gtk::DropDown>(rows.widget().upcast_ref()).unwrap();
+    assert_eq!(dropdown.selected(), 0);
+    assert_eq!(rows[&()].get_value().as_selected(), Some(0));
+    rows.send(&(), SettingRowMsg::Reset);
+    assert_silent(context, &receiver);
+    assert_eq!(rows[&()].get_changed_value(), None);
 }

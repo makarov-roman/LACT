@@ -1,9 +1,11 @@
 mod adjustment_control;
 mod boolean_control;
+mod select_control;
 
 pub use self::{
     adjustment_control::{AdjustmentControl, AdjustmentControlMsg, AdjustmentInit},
     boolean_control::{BooleanControl, BooleanControlMsg, BooleanInit},
+    select_control::{SelectControl, SelectControlMsg, SelectInit, SelectOption},
 };
 use super::setting_value::SettingValue;
 use adw::prelude::*;
@@ -39,6 +41,7 @@ impl SettingRowInit {
 pub enum SettingControlInit {
     Adjustment(AdjustmentInit),
     Boolean(BooleanInit),
+    Select(SelectInit),
 }
 
 impl From<AdjustmentInit> for SettingControlInit {
@@ -53,29 +56,70 @@ impl From<BooleanInit> for SettingControlInit {
     }
 }
 
+impl From<SelectInit> for SettingControlInit {
+    fn from(init: SelectInit) -> Self {
+        Self::Select(init)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SettingRowValue {
     Numeric(f64),
     Boolean(bool),
+    Selected(Option<u32>),
 }
 
 impl SettingRowValue {
     pub fn as_numeric(self) -> Option<f64> {
         match self {
             Self::Numeric(value) => Some(value),
-            Self::Boolean(_) => None,
+            _ => None,
         }
     }
 
     pub fn as_boolean(self) -> Option<bool> {
         match self {
             Self::Boolean(value) => Some(value),
-            Self::Numeric(_) => None,
+            _ => None,
+        }
+    }
+
+    pub fn as_selected(self) -> Option<u32> {
+        match self {
+            Self::Selected(value) => value,
+            _ => None,
         }
     }
 }
 
 impl<Key> SettingRow<Key> {
+    pub fn widget(&self) -> &gtk::Box {
+        self.control.widget()
+    }
+
+    pub fn has_default(&self) -> bool {
+        match &self.control {
+            SettingControl::Adjustment(control) => control.model().value.has_default(),
+            SettingControl::Boolean(control) => control.model().value.has_default(),
+            SettingControl::Select(control) => control.model().value.has_default(),
+        }
+    }
+
+    fn set_value(&self, value: SettingRowValue) {
+        match (&self.control, value) {
+            (SettingControl::Adjustment(control), SettingRowValue::Numeric(value)) => {
+                control.model().value.set_value(value)
+            }
+            (SettingControl::Boolean(control), SettingRowValue::Boolean(value)) => {
+                control.model().value.set_value(value)
+            }
+            (SettingControl::Select(control), SettingRowValue::Selected(value)) => {
+                control.model().value.set_value(value)
+            }
+            _ => panic!("setting value does not match the row's control"),
+        }
+    }
+
     pub fn get_value(&self) -> SettingRowValue {
         match &self.control {
             SettingControl::Adjustment(control) => {
@@ -83,6 +127,9 @@ impl<Key> SettingRow<Key> {
             }
             SettingControl::Boolean(control) => {
                 SettingRowValue::Boolean(control.model().value.get_value())
+            }
+            SettingControl::Select(control) => {
+                SettingRowValue::Selected(control.model().value.get_value())
             }
         }
     }
@@ -99,6 +146,11 @@ impl<Key> SettingRow<Key> {
                 .value
                 .get_changed_value()
                 .map(SettingRowValue::Boolean),
+            SettingControl::Select(control) => control
+                .model()
+                .value
+                .get_changed_value()
+                .map(SettingRowValue::Selected),
         }
     }
 }
@@ -106,6 +158,7 @@ impl<Key> SettingRow<Key> {
 pub enum SettingControl {
     Adjustment(Controller<AdjustmentControl>),
     Boolean(Controller<BooleanControl>),
+    Select(Controller<SelectControl>),
 }
 
 impl SettingControl {
@@ -121,6 +174,11 @@ impl SettingControl {
                     .launch((init, title))
                     .forward(output, |()| ()),
             ),
+            SettingControlInit::Select(init) => Self::Select(
+                SelectControl::builder()
+                    .launch((init, title))
+                    .forward(output, |()| ()),
+            ),
         }
     }
 
@@ -128,6 +186,7 @@ impl SettingControl {
         match self {
             Self::Adjustment(control) => control.widget(),
             Self::Boolean(control) => control.widget(),
+            Self::Select(control) => control.widget(),
         }
     }
 
@@ -135,6 +194,7 @@ impl SettingControl {
         match self {
             Self::Adjustment(control) => control.emit(AdjustmentControlMsg::SetVisible(visible)),
             Self::Boolean(control) => control.emit(BooleanControlMsg::SetVisible(visible)),
+            Self::Select(control) => control.emit(SelectControlMsg::SetVisible(visible)),
         }
     }
 
@@ -142,6 +202,34 @@ impl SettingControl {
         match self {
             Self::Adjustment(control) => control.emit(AdjustmentControlMsg::Reset),
             Self::Boolean(control) => control.emit(BooleanControlMsg::Reset),
+            Self::Select(control) => control.emit(SelectControlMsg::Reset),
+        }
+    }
+
+    fn set_sensitive(&self, sensitive: bool) {
+        match self {
+            Self::Adjustment(control) => {
+                control.emit(AdjustmentControlMsg::SetSensitive(sensitive))
+            }
+            Self::Boolean(control) => control.emit(BooleanControlMsg::SetSensitive(sensitive)),
+            Self::Select(control) => control.emit(SelectControlMsg::SetSensitive(sensitive)),
+        }
+    }
+
+    fn add_size_group(&self, label_group: gtk::SizeGroup, input_group: Option<gtk::SizeGroup>) {
+        match self {
+            Self::Adjustment(control) => control.emit(AdjustmentControlMsg::AddSizeGroup {
+                label_group,
+                input_group,
+            }),
+            Self::Boolean(control) => control.emit(BooleanControlMsg::AddSizeGroup {
+                label_group,
+                input_group,
+            }),
+            Self::Select(control) => control.emit(SelectControlMsg::AddSizeGroup {
+                label_group,
+                input_group,
+            }),
         }
     }
 }
@@ -149,7 +237,14 @@ impl SettingControl {
 #[derive(Debug)]
 pub enum SettingRowMsg {
     Reset,
+    SetValue(SettingRowValue),
     SetVisible(bool),
+    /// Enable editing while leaving informational popovers accessible.
+    SetSensitive(bool),
+    AddSizeGroup {
+        label_group: gtk::SizeGroup,
+        input_group: Option<gtk::SizeGroup>,
+    },
 }
 
 #[relm4::factory(pub)]
@@ -171,6 +266,7 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
             add_css_class: match &self.control {
                 SettingControl::Adjustment(_) => "adjustment-row",
                 SettingControl::Boolean(_) => "boolean-row",
+                SettingControl::Select(_) => "select-row",
             },
             set_child: Some(self.control.widget()),
         },
@@ -203,6 +299,12 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
     ) {
         match msg {
             SettingRowMsg::Reset => self.control.reset(),
+            SettingRowMsg::SetValue(value) => self.set_value(value),
+            SettingRowMsg::SetSensitive(sensitive) => self.control.set_sensitive(sensitive),
+            SettingRowMsg::AddSizeGroup {
+                label_group,
+                input_group,
+            } => self.control.add_size_group(label_group, input_group),
             SettingRowMsg::SetVisible(visible) => {
                 self.control.set_visible(visible);
                 widgets.root_row.set_visible(visible);

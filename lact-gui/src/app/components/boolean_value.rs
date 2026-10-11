@@ -57,6 +57,10 @@ impl SettingValue for BooleanValue {
         }
     }
 
+    fn has_default(&self) -> bool {
+        self.default_value.is_some()
+    }
+
     fn is_changed(&self) -> &BoolBinding {
         &self.is_changed
     }
