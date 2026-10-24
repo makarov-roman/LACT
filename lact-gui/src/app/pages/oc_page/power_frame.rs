@@ -192,7 +192,7 @@ impl relm4::Component for PowerFrame {
                 {
                     self.rows.send(
                         &PowerSetting::PerformanceLevel,
-                        SettingRowMsg::SetValue(SettingRowValue::Selected(Some(index as u32))),
+                        SettingRowMsg::SetValue(SettingRowValue::Selected(index as u32)),
                     );
                 }
             }

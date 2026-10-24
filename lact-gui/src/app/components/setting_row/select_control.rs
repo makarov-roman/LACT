@@ -1,5 +1,5 @@
 use super::{select_value::SelectValue, setting_value::SettingValue};
-use gtk::prelude::*;
+use adw::prelude::*;
 use relm4::{Component, ComponentParts, ComponentSender, RelmObjectExt, css};
 
 #[derive(Default)]
@@ -36,7 +36,6 @@ pub struct SelectControl {
 #[derive(Debug)]
 pub enum SelectControlMsg {
     Changed,
-    Reset,
     SetVisible(bool),
 }
 
@@ -53,7 +52,6 @@ impl Component for SelectControl {
     type CommandOutput = ();
 
     view! {
-        #[root]
         gtk::Box {
             set_spacing: 12,
 
@@ -132,7 +130,6 @@ impl Component for SelectControl {
             SelectControlMsg::Changed => {
                 let _ = sender.output(());
             }
-            SelectControlMsg::Reset => self.value.reset(),
             SelectControlMsg::SetVisible(visible) => {
                 if root.get_visible() != visible {
                     for (group, widget) in &self.size_group_widgets {
@@ -153,19 +150,13 @@ impl Component for SelectControl {
         if let Some(signal) = self.change_signal.take() {
             self.value.binding().disconnect(signal);
         }
-        for (group, widget) in self.size_group_widgets.drain(..) {
-            if group.widgets().contains(&widget) {
-                group.remove_widget(&widget);
-            }
-        }
     }
 }
 
 impl SelectControl {
     fn description(&self) -> &str {
-        self.value
-            .get_value()
-            .and_then(|index| self.options.get(index as usize))
+        self.options
+            .get(self.value.get_value() as usize)
             .map(|option| option.description.as_str())
             .unwrap_or_default()
     }

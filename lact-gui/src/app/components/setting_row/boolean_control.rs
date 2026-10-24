@@ -1,5 +1,5 @@
-use super::{boolean_value::BooleanValue, setting_value::SettingValue};
-use gtk::prelude::*;
+use super::boolean_value::BooleanValue;
+use adw::prelude::*;
 use relm4::{Component, ComponentParts, ComponentSender, binding::ConnectBinding};
 
 #[derive(Default)]
@@ -17,7 +17,6 @@ pub struct BooleanControl {
 #[derive(Debug)]
 pub enum BooleanControlMsg {
     Changed,
-    Reset,
     SetVisible(bool),
 }
 
@@ -34,7 +33,6 @@ impl Component for BooleanControl {
     type CommandOutput = ();
 
     view! {
-        #[root]
         gtk::Box {
             set_spacing: 12,
             append: &model.title,
@@ -85,7 +83,6 @@ impl Component for BooleanControl {
             BooleanControlMsg::Changed => {
                 let _ = sender.output(());
             }
-            BooleanControlMsg::Reset => self.value.reset(),
             BooleanControlMsg::SetVisible(visible) => {
                 if root.get_visible() != visible {
                     for (group, widget) in &self.size_group_widgets {
@@ -97,14 +94,6 @@ impl Component for BooleanControl {
                     }
                 }
                 root.set_visible(visible);
-            }
-        }
-    }
-
-    fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
-        for (group, widget) in self.size_group_widgets.drain(..) {
-            if group.widgets().contains(&widget) {
-                group.remove_widget(&widget);
             }
         }
     }

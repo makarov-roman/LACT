@@ -6,11 +6,16 @@ mod select_control;
 mod select_value;
 mod setting_value;
 
-use self::setting_value::SettingValue;
+use self::{
+    adjustment_control::AdjustmentControl,
+    boolean_control::{BooleanControl, BooleanControlMsg},
+    select_control::{SelectControl, SelectControlMsg},
+    setting_value::SettingValue,
+};
 pub use self::{
-    adjustment_control::{AdjustmentControl, AdjustmentControlMsg, AdjustmentInit},
-    boolean_control::{BooleanControl, BooleanControlMsg, BooleanInit},
-    select_control::{SelectControl, SelectControlMsg, SelectInit, SelectOption},
+    adjustment_control::{AdjustmentControlMsg, AdjustmentInit},
+    boolean_control::BooleanInit,
+    select_control::{SelectInit, SelectOption},
 };
 use adw::prelude::*;
 use relm4::{
@@ -68,7 +73,7 @@ impl From<SelectInit> for SettingControlInit {
 pub enum SettingRowValue {
     Numeric(f64),
     Boolean(bool),
-    Selected(Option<u32>),
+    Selected(u32),
 }
 
 impl SettingRowValue {
@@ -88,7 +93,7 @@ impl SettingRowValue {
 
     pub fn as_selected(self) -> Option<u32> {
         match self {
-            Self::Selected(value) => value,
+            Self::Selected(value) => Some(value),
             _ => None,
         }
     }
@@ -203,9 +208,9 @@ impl SettingControl {
 
     fn reset(&self) {
         match self {
-            Self::Adjustment(control) => control.emit(AdjustmentControlMsg::Reset),
-            Self::Boolean(control) => control.emit(BooleanControlMsg::Reset),
-            Self::Select(control) => control.emit(SelectControlMsg::Reset),
+            Self::Adjustment(control) => control.model().value.reset(),
+            Self::Boolean(control) => control.model().value.reset(),
+            Self::Select(control) => control.model().value.reset(),
         }
     }
 }
@@ -227,7 +232,6 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
     type CommandOutput = ();
 
     view! {
-        #[root]
         #[name = "root_row"]
         gtk::ListBoxRow {
             set_activatable: false,

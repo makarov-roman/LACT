@@ -1,4 +1,4 @@
-use super::{adjustment_value::AdjustmentValue, setting_value::SettingValue};
+use super::adjustment_value::AdjustmentValue;
 use crate::app::utils::{ext::make_event_controller_no_scroll, formatting::fmt_value_with_unit};
 use adw::prelude::*;
 use relm4::{Component, ComponentParts, ComponentSender, css};
@@ -41,9 +41,8 @@ pub struct AdjustmentControl {
 #[derive(Debug)]
 pub enum AdjustmentControlMsg {
     Changed,
-    /// Change numeric display units, retaining the value and edit state.
+    /// Change numeric display units, retaining the value.
     SetValueRatio(f64),
-    Reset,
     SetVisible(bool),
 }
 
@@ -173,7 +172,6 @@ impl Component for AdjustmentControl {
                     .unblock_signal(&widgets.text_change_signal);
                 self.value.unblock_signal(&widgets.value_change_signal);
             }
-            AdjustmentControlMsg::Reset => self.value.reset(),
             AdjustmentControlMsg::SetVisible(visible) => {
                 if root.get_visible() != visible {
                     for (group, widget) in &self.size_group_widgets {
@@ -185,14 +183,6 @@ impl Component for AdjustmentControl {
                     }
                 }
                 root.set_visible(visible);
-            }
-        }
-    }
-
-    fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
-        for (group, widget) in self.size_group_widgets.drain(..) {
-            if group.widgets().contains(&widget) {
-                group.remove_widget(&widget);
             }
         }
     }
