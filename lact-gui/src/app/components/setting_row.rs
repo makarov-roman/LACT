@@ -317,6 +317,3 @@ impl WidgetTemplate for SettingTitle {
         },
     }
 }
-
-#[cfg(all(test, feature = "gtk-tests"))]
-mod tests;

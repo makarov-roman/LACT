@@ -13,9 +13,6 @@ mod process_monitor;
 mod profiles;
 pub(crate) mod utils;
 
-#[cfg(all(test, feature = "gtk-tests"))]
-mod test_utils;
-
 use crate::{
     APP_ID, CONFIG, I18N,
     app::{

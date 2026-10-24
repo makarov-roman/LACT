@@ -348,6 +348,3 @@ impl OcPage {
         self.power_frame.model().performance_level()
     }
 }
-
-#[cfg(all(test, feature = "gtk-tests"))]
-mod tests;

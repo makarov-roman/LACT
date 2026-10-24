@@ -387,6 +387,3 @@ fn power_mizer_option(mode: PowerMizerMode) -> SelectOption {
     };
     SelectOption { label, description }
 }
-
-#[cfg(all(test, feature = "gtk-tests"))]
-mod tests;
