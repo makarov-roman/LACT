@@ -29,14 +29,13 @@ pub struct SelectControl {
     pub(super) value: SelectValue,
     options: Vec<SelectOption>,
     title: gtk::Box,
-    size_group_widgets: Vec<(gtk::SizeGroup, gtk::Widget)>,
+    pub(super) size_group_widgets: Vec<(gtk::SizeGroup, gtk::Widget)>,
     change_signal: Option<gtk::glib::SignalHandlerId>,
 }
 
 #[derive(Debug)]
 pub enum SelectControlMsg {
     Changed,
-    SetVisible(bool),
 }
 
 #[relm4::component(pub)]
@@ -119,31 +118,12 @@ impl Component for SelectControl {
         ComponentParts { model, widgets }
     }
 
-    fn update_with_view(
-        &mut self,
-        widgets: &mut Self::Widgets,
-        msg: Self::Input,
-        sender: ComponentSender<Self>,
-        root: &Self::Root,
-    ) {
+    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
         match msg {
             SelectControlMsg::Changed => {
                 let _ = sender.output(());
             }
-            SelectControlMsg::SetVisible(visible) => {
-                if root.get_visible() != visible {
-                    for (group, widget) in &self.size_group_widgets {
-                        if visible {
-                            group.add_widget(widget);
-                        } else {
-                            group.remove_widget(widget);
-                        }
-                    }
-                }
-                root.set_visible(visible);
-            }
         }
-        self.update_view(widgets, sender);
     }
 
     fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {

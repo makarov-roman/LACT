@@ -7,10 +7,8 @@ mod select_value;
 mod setting_value;
 
 use self::{
-    adjustment_control::AdjustmentControl,
-    boolean_control::{BooleanControl, BooleanControlMsg},
-    select_control::{SelectControl, SelectControlMsg},
-    setting_value::SettingValue,
+    adjustment_control::AdjustmentControl, boolean_control::BooleanControl,
+    select_control::SelectControl, setting_value::SettingValue,
 };
 pub use self::{
     adjustment_control::{AdjustmentControlMsg, AdjustmentInit},
@@ -198,11 +196,21 @@ impl SettingControl {
         }
     }
 
-    fn set_visible(&self, visible: bool) {
+    /// Size groups also measure widgets inside hidden rows, so hidden rows leave their groups.
+    fn set_size_groups_enabled(&self, enabled: bool) {
+        let toggle = |size_group_widgets: &[(gtk::SizeGroup, gtk::Widget)]| {
+            for (group, widget) in size_group_widgets {
+                if enabled {
+                    group.add_widget(widget);
+                } else {
+                    group.remove_widget(widget);
+                }
+            }
+        };
         match self {
-            Self::Adjustment(control) => control.emit(AdjustmentControlMsg::SetVisible(visible)),
-            Self::Boolean(control) => control.emit(BooleanControlMsg::SetVisible(visible)),
-            Self::Select(control) => control.emit(SelectControlMsg::SetVisible(visible)),
+            Self::Adjustment(control) => toggle(&control.model().size_group_widgets),
+            Self::Boolean(control) => toggle(&control.model().size_group_widgets),
+            Self::Select(control) => toggle(&control.model().size_group_widgets),
         }
     }
 
@@ -263,8 +271,10 @@ impl<Key: 'static> FactoryComponent for SettingRow<Key> {
             SettingRowMsg::Reset => self.control.reset(),
             SettingRowMsg::SetValue(value) => self.set_value(value),
             SettingRowMsg::SetVisible(visible) => {
-                self.control.set_visible(visible);
-                widgets.root_row.set_visible(visible);
+                if widgets.root_row.get_visible() != visible {
+                    self.control.set_size_groups_enabled(visible);
+                    widgets.root_row.set_visible(visible);
+                }
             }
         }
     }

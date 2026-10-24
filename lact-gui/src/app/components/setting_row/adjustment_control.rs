@@ -35,7 +35,7 @@ pub struct AdjustmentControl {
     pub(super) value: AdjustmentValue,
     title: gtk::Box,
     unit: String,
-    size_group_widgets: Vec<(gtk::SizeGroup, gtk::Widget)>,
+    pub(super) size_group_widgets: Vec<(gtk::SizeGroup, gtk::Widget)>,
 }
 
 #[derive(Debug)]
@@ -43,7 +43,6 @@ pub enum AdjustmentControlMsg {
     Changed,
     /// Change numeric display units, retaining the value.
     SetValueRatio(f64),
-    SetVisible(bool),
 }
 
 #[relm4::component(pub)]
@@ -151,7 +150,7 @@ impl Component for AdjustmentControl {
         widgets: &mut Self::Widgets,
         msg: Self::Input,
         sender: ComponentSender<Self>,
-        root: &Self::Root,
+        _root: &Self::Root,
     ) {
         match msg {
             AdjustmentControlMsg::Changed => {
@@ -171,18 +170,6 @@ impl Component for AdjustmentControl {
                     .spinbutton
                     .unblock_signal(&widgets.text_change_signal);
                 self.value.unblock_signal(&widgets.value_change_signal);
-            }
-            AdjustmentControlMsg::SetVisible(visible) => {
-                if root.get_visible() != visible {
-                    for (group, widget) in &self.size_group_widgets {
-                        if visible {
-                            group.add_widget(widget);
-                        } else {
-                            group.remove_widget(widget);
-                        }
-                    }
-                }
-                root.set_visible(visible);
             }
         }
     }

@@ -11,13 +11,12 @@ pub struct BooleanInit {
 pub struct BooleanControl {
     pub(super) value: BooleanValue,
     title: gtk::Box,
-    size_group_widgets: Vec<(gtk::SizeGroup, gtk::Widget)>,
+    pub(super) size_group_widgets: Vec<(gtk::SizeGroup, gtk::Widget)>,
 }
 
 #[derive(Debug)]
 pub enum BooleanControlMsg {
     Changed,
-    SetVisible(bool),
 }
 
 #[relm4::component(pub)]
@@ -72,28 +71,10 @@ impl Component for BooleanControl {
         ComponentParts { model, widgets }
     }
 
-    fn update_with_view(
-        &mut self,
-        _widgets: &mut Self::Widgets,
-        msg: Self::Input,
-        sender: ComponentSender<Self>,
-        root: &Self::Root,
-    ) {
+    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
         match msg {
             BooleanControlMsg::Changed => {
                 let _ = sender.output(());
-            }
-            BooleanControlMsg::SetVisible(visible) => {
-                if root.get_visible() != visible {
-                    for (group, widget) in &self.size_group_widgets {
-                        if visible {
-                            group.add_widget(widget);
-                        } else {
-                            group.remove_widget(widget);
-                        }
-                    }
-                }
-                root.set_visible(visible);
             }
         }
     }
