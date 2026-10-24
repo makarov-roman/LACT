@@ -1279,6 +1279,7 @@ impl AppModel {
             &self
                 .application
                 .active_window()
+                .filter(|window| window.is_visible())
                 .unwrap_or_else(|| root.clone().upcast()),
             sender,
         );
